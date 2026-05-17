@@ -20,8 +20,11 @@ jobs:
         cd paint
         ../base/make --compile
     - name: Build engine test (cube)
-      run: cd base/tests/cube && ../../../base/make --compile
+      working-directory: base/tests/cube
+      run: ../../../base/make --compile
     - name: Build engine test (fall)
-      run: cd base/tests/fall && ../../../base/make --compile
+      working-directory: base/tests/fall
+      run: ../../../base/make --compile
     - name: Build engine test (triangle)
-      run: cd base/tests/triangle && ../../../base/make --compile
+      working-directory: base/tests/triangle
+      run: ../../../base/make --compile
