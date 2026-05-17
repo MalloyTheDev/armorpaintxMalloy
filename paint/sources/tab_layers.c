@@ -63,8 +63,11 @@ void tab_layers_handle_layer_icon_state(slot_layer_t *l, i32 i, ui_state_t state
 		if (sys_time() - g_context->select_time > 0.2) {
 			g_context->select_time = sys_time();
 		}
-		if (l->fill_layer != NULL) {
-			context_set_material(l->fill_layer);
+		if (l->fill_material != NULL) {
+			context_set_material(l->fill_material);
+		}
+		else if (l->path_material != NULL) {
+			context_set_material(l->path_material);
 		}
 	}
 }
@@ -90,17 +93,17 @@ ui_state_t tab_layers_draw_layer_icon(slot_layer_t *l, i32 i, f32 uix, f32 uiy, 
 		gpu_texture_t *texpaint_preview = l->texpaint_preview;
 
 		gpu_texture_t *icon;
-		if (l->fill_layer == NULL) {
-			icon = texpaint_preview;
+		if (l->fill_material != NULL) {
+			icon = g_config->window_scale > 1 ? l->fill_material->image : l->fill_material->image_icon;
 		}
-		else if (g_config->window_scale > 1) {
-			icon = l->fill_layer->image;
+		else if (l->path_material != NULL) {
+			icon = g_config->window_scale > 1 ? l->path_material->image : l->path_material->image_icon;
 		}
 		else {
-			icon = l->fill_layer->image_icon;
+			icon = texpaint_preview;
 		}
 
-		if (l->fill_layer == NULL) {
+		if (l->fill_material == NULL && l->path_material == NULL) {
 			// Checker
 			rect_t *r  = resource_tile50(icons, ICON_CHECKER);
 			f32     _x = ui->_x;
@@ -111,14 +114,14 @@ ui_state_t tab_layers_draw_layer_icon(slot_layer_t *l, i32 i, f32 uix, f32 uiy, 
 			ui->_y = _y;
 			ui->_w = _w;
 		}
-		if (l->fill_layer == NULL && slot_layer_is_mask(l)) {
+		if (l->fill_material == NULL && slot_layer_is_mask(l)) {
 			draw_set_pipeline(ui_view2d_pipe);
 			gpu_set_int(ui_view2d_channel_loc, 1);
 		}
 
 		ui_state_t state = ui_image(icon, 0xffffffff, icon_h);
 
-		if (l->fill_layer == NULL && slot_layer_is_mask(l)) {
+		if (l->fill_material == NULL && slot_layer_is_mask(l)) {
 			draw_set_pipeline(NULL);
 		}
 
@@ -142,7 +145,7 @@ ui_state_t tab_layers_draw_layer_icon(slot_layer_t *l, i32 i, f32 uix, f32 uiy, 
 		rect_t *folder_closed = resource_tile50(icons, ICON_FOLDER_FULL);
 		rect_t *folder_open   = resource_tile50(icons, ICON_FOLDER_OPEN);
 		rect_t *folder        = l->show_panel ? folder_open : folder_closed;
-		return ui_sub_image(icons, ui->ops->theme->LABEL_COL - 0x00202020, icon_h, folder->x, folder->y, folder->w, folder->h);
+		return ui_sub_image(icons, base_darker(ui->ops->theme->LABEL_COL, 0x00202020), icon_h, folder->x, folder->y, folder->w, folder->h);
 	}
 }
 
@@ -231,7 +234,7 @@ void tab_layers_draw_layer_slot_full_delete_layer(void *_) {
 }
 
 void tab_layers_combo_object_layer_clear(slot_layer_t *l) {
-	g_context->material = l->fill_layer;
+	g_context->material = l->fill_material;
 	slot_layer_clear(l, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
 	layers_update_fill_layers();
 }
@@ -259,7 +262,7 @@ ui_handle_t *tab_layers_combo_object(slot_layer_t *l, bool label) {
 	if (object_handle->changed) {
 		context_set_layer(l);
 		make_material_parse_mesh_material();
-		if (l->fill_layer != NULL) { // Fill layer
+		if (l->fill_material != NULL) {
 			sys_notify_on_next_frame(&tab_layers_combo_object_layer_clear, l);
 		}
 		else {
@@ -333,6 +336,18 @@ bool tab_layers_can_delete(slot_layer_t *l) {
 	return num_layers > 1;
 }
 
+void tab_layers_draw_layer_context_menu_duplicate(void *_) {
+	slot_layer_t *l = tab_layers_l;
+	context_set_layer(l);
+	history_duplicate_layer();
+	layers_duplicate_layer(l);
+}
+
+bool tab_layers_has_children(slot_layer_t *l) {
+	return slot_layer_is_group(l) || (slot_layer_is_layer(l) && slot_layer_get_masks(l, false) != NULL) ||
+	       (slot_layer_is_layer(l) && slot_layer_get_filters(l, false));
+}
+
 void tab_layers_draw_layer_slot_full(slot_layer_t *l, i32 i) {
 	i32 step   = ui->ops->theme->ELEMENT_H;
 	f32 center = (step / 2.0) * UI_SCALE();
@@ -340,7 +355,7 @@ void tab_layers_draw_layer_slot_full(slot_layer_t *l, i32 i) {
 	f32 uix    = ui->_x;
 	f32 uiy    = ui->_y;
 
-	bool has_children = slot_layer_is_group(l) || (slot_layer_is_layer(l) && slot_layer_get_masks(l, false) != NULL);
+	bool has_children = tab_layers_has_children(l);
 
 	// Draw eye icon
 	f32_array_t *row = f32_array_create_from_raw(
@@ -422,6 +437,13 @@ void tab_layers_draw_layer_slot_full(slot_layer_t *l, i32 i) {
 			ui->is_delete_down = false;
 			sys_notify_on_next_frame(&tab_layers_draw_layer_slot_full_delete_layer, NULL);
 		}
+		if (in_focus && ui->is_ctrl_down && ui->is_key_pressed && ui->key_code == KEY_CODE_D) {
+			ui->is_key_pressed = false;
+			gc_unroot(tab_layers_l);
+			tab_layers_l = g_context->layer;
+			gc_root(tab_layers_l);
+			sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_duplicate, NULL);
+		}
 	}
 
 	// Blending combo
@@ -493,6 +515,14 @@ void tab_layers_draw_layer_context_menu_delete(void *_) {
 
 void tab_layers_draw_layer_context_menu_to_paint_layer(void *_) {
 	slot_layer_t *l = tab_layers_l;
+
+	if (slot_layer_is_filter(l)) {
+		i32 pi = array_index_of(project_layers, l->parent);
+		array_remove(project_layers, l);
+		array_insert(project_layers, pi, l);
+		l->parent = NULL;
+	}
+
 	slot_layer_is_layer(l) ? history_to_paint_layer() : history_to_paint_mask();
 	slot_layer_to_paint_layer(l);
 }
@@ -505,7 +535,7 @@ void tab_layers_draw_layer_context_menu_to_fill_layer(void *_) {
 
 void tab_layers_make_mask_preview_rgba32_on_next_frame(void *_) {
 	slot_layer_t *l = tab_layers_l;
-	draw_begin(g_context->mask_preview_rgba32, false, 0);
+	draw_begin(g_context->mask_preview_rgba32, true, 0xff000000);
 	draw_set_pipeline(ui_view2d_pipe);
 	gpu_set_int(ui_view2d_channel_loc, 1);
 	draw_image(l->texpaint_preview, 0, 0);
@@ -542,19 +572,12 @@ void tab_layers_draw_layer_context_menu_set_bits(void *_) {
 	layers_set_bits();
 }
 
-void tab_layers_draw_layer_context_menu_duplicate(void *_) {
-	slot_layer_t *l = tab_layers_l;
-	context_set_layer(l);
-	history_duplicate_layer();
-	layers_duplicate_layer(l);
-}
-
 void tab_layers_draw_layer_context_menu_merge_down(void *_) {
 	slot_layer_t *l = tab_layers_l;
 	context_set_layer(l);
 	history_merge_layers();
 	layers_merge_down();
-	if (g_context->layer->fill_layer != NULL)
+	if (g_context->layer->fill_material != NULL)
 		slot_layer_to_paint_layer(g_context->layer);
 }
 
@@ -573,6 +596,12 @@ void tab_layers_draw_layer_context_menu_apply(void *_) {
 	g_context->layers_preview_dirty = true;
 }
 
+void tab_layers_draw_layer_context_menu_apply_sculpt(void *_) {
+	slot_layer_t *l  = tab_layers_l;
+	g_context->layer = l;
+	slot_layer_apply_sculpt(l);
+}
+
 void tab_layers_draw_layer_context_menu_invert(void *_) {
 	slot_layer_t *l = tab_layers_l;
 	context_set_layer(l);
@@ -585,6 +614,7 @@ void tab_layers_draw_layer_context_menu_clear(void *_) {
 	if (!slot_layer_is_group(l)) {
 		history_clear_layer();
 		slot_layer_clear(l, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
+		util_layer_clear_path_points(l);
 	}
 	else {
 		for (i32 i = 0; i < slot_layer_get_children(l)->length; ++i) {
@@ -636,13 +666,18 @@ void tab_layers_draw_layer_context_menu_draw() {
 	if (!slot_layer_is_group(l)) {
 		char *to_fill_string  = slot_layer_is_layer(l) ? tr("To Fill Layer") : tr("To Fill Mask");
 		char *to_paint_string = slot_layer_is_layer(l) ? tr("To Paint Layer") : tr("To Paint Mask");
+		bool  fill_layer      = l->fill_material != NULL || l->path_material != NULL;
 
-		if (l->fill_layer == NULL && ui_menu_button(to_fill_string, "", ICON_SPHERE)) {
+		if (!fill_layer && ui_menu_button(to_fill_string, "", ICON_SPHERE)) {
 			sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_to_fill_layer, NULL);
 		}
-		if (l->fill_layer != NULL && ui_menu_button(to_paint_string, "", ICON_PAINT)) {
+		if (fill_layer && ui_menu_button(to_paint_string, "", ICON_PAINT)) {
 			sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_to_paint_layer, NULL);
 		}
+	}
+
+	if (slot_layer_is_layer(l) && l->fill_material != NULL && l->texpaint_sculpt != NULL && ui_menu_button(tr("Apply"), "", ICON_CHECK)) {
+		sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_apply_sculpt, NULL);
 	}
 
 	ui->enabled = tab_layers_can_delete(l);
@@ -651,11 +686,11 @@ void tab_layers_draw_layer_context_menu_draw() {
 	}
 	ui->enabled = true;
 
-	if (l->fill_layer == NULL && ui_menu_button(tr("Clear"), "", ICON_ERASE)) {
+	if (l->fill_material == NULL && ui_menu_button(tr("Clear"), "", ICON_ERASE)) {
 		context_set_layer(l);
 		sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_clear, NULL);
 	}
-	if (slot_layer_is_mask(l) && l->fill_layer == NULL && ui_menu_button(tr("Invert"), "", ICON_INVERT)) {
+	if (slot_layer_is_mask(l) && l->fill_material == NULL && ui_menu_button(tr("Invert"), "", ICON_INVERT)) {
 		sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_invert, NULL);
 	}
 	if (slot_layer_is_mask(l) && ui_menu_button(tr("Apply"), "", ICON_CHECK)) {
@@ -671,7 +706,7 @@ void tab_layers_draw_layer_context_menu_draw() {
 	}
 	ui->enabled = true;
 
-	if (ui_menu_button(tr("Duplicate"), "", ICON_DUPLICATE)) {
+	if (ui_menu_button(tr("Duplicate"), "ctrl+d", ICON_DUPLICATE)) {
 		sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_duplicate, NULL);
 	}
 
@@ -768,13 +803,13 @@ void tab_layers_draw_layer_context_menu_draw() {
 			ui_menu_keep_open = true;
 		}
 	}
-	if (l->fill_layer != NULL) {
+	if (l->fill_material != NULL) {
 		ui_menu_align();
 		ui_handle_t *scale_handle = ui_nest(ui_handle(__ID__), l->id);
 		scale_handle->f           = l->scale;
 		l->scale                  = ui_slider(scale_handle, tr("UV Scale"), 0.0, 5.0, true, 100.0, true, UI_ALIGN_RIGHT, true);
 		if (scale_handle->changed) {
-			context_set_material(l->fill_layer);
+			context_set_material(l->fill_material);
 			context_set_layer(l);
 			sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_update_fill_layers, NULL);
 			ui_menu_keep_open = true;
@@ -785,7 +820,7 @@ void tab_layers_draw_layer_context_menu_draw() {
 		angle_handle->f           = l->angle;
 		l->angle                  = ui_slider(angle_handle, tr("Angle"), 0.0, 360, true, 1, true, UI_ALIGN_RIGHT, true);
 		if (angle_handle->changed) {
-			context_set_material(l->fill_layer);
+			context_set_material(l->fill_material);
 			context_set_layer(l);
 			make_material_parse_paint_material(true);
 			sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_update_fill_layers, NULL);
@@ -804,7 +839,7 @@ void tab_layers_draw_layer_context_menu_draw() {
 		    3);
 		l->uv_type = ui_inline_radio(uv_type_handle, uv_type_items, UI_ALIGN_LEFT);
 		if (uv_type_handle->changed) {
-			context_set_material(l->fill_layer);
+			context_set_material(l->fill_material);
 			context_set_layer(l);
 			make_material_parse_paint_material(true);
 			sys_notify_on_next_frame(&tab_layers_draw_layer_context_menu_update_fill_layers, NULL);
@@ -955,7 +990,7 @@ void tab_layers_highlight_odd_lines() {
 	i32 full_h = ui->_window_h - ui_base_hwnds->buffer[0]->scroll_offset;
 	for (i32 i = 0; i < math_floor(full_h / (float)step); ++i) {
 		if (i % 2 == 0) {
-			ui_fill(0, i * step, (ui->_w / (float)UI_SCALE() - 2), step, ui->ops->theme->WINDOW_BG_COL - 0x00040404);
+			ui_fill(0, i * step, (ui->_w / (float)UI_SCALE() - 2), step, base_darker(ui->ops->theme->WINDOW_BG_COL, 0x00040404));
 		}
 	}
 }
@@ -989,51 +1024,80 @@ void tab_layers_button_new_menu() {
 	}
 	else {
 		if (ui_menu_button(tr("Paint Layer"), "", ICON_PAINT)) {
-			layers_new_layer(true, -1);
+			layers_new_layer(true, -1, NULL);
 			history_new_layer();
 		}
 	}
 	if (ui_menu_button(tr("Fill Layer"), "", ICON_SPHERE)) {
 		layers_create_fill_layer(UV_TYPE_UVMAP, mat4_nan(), -1);
 	}
-	if (ui_menu_button(tr("Decal Layer"), "", ICON_DECAL)) {
+	if (ui_menu_button(tr("Decal"), "", ICON_DECAL)) {
 		layers_create_fill_layer(UV_TYPE_PROJECT, mat4_nan(), -1);
 	}
+	if (ui_menu_button(tr("Path"), "", ICON_PATH)) {
+		layers_new_path_layer(false);
+		history_new_layer();
+	}
+	if (ui_menu_button(tr("Curve"), "", ICON_CURVE)) {
+		layers_new_path_layer(true);
+		history_new_layer();
+	}
 	if (ui_menu_button(tr("Black Mask"), "", ICON_MASK)) {
-		if (slot_layer_is_mask(l)) {
+		if (slot_layer_is_mask(l) || slot_layer_is_filter(l)) {
 			context_set_layer(l->parent);
 		}
 		l = g_context->layer;
 
-		slot_layer_t *m = layers_new_mask(false, l, -1);
+		i32_map_t    *pointers = tab_layers_init_layer_map();
+		slot_layer_t *m        = layers_new_mask(false, l, -1);
+		for (i32 i = 0; i < project_materials->length; ++i) {
+			slot_material_t *mat = project_materials->buffer[i];
+			tab_layers_remap_layer_pointers(mat->canvas->nodes, tab_layers_fill_layer_map(pointers));
+		}
 		sys_notify_on_next_frame(&tab_layers_button_new_black_mask, m);
 		g_context->layer_preview_dirty = true;
 		history_new_black_mask();
 		sys_notify_on_next_frame(&tab_layers_button_new_update_fill_layers, NULL);
 	}
 	if (ui_menu_button(tr("White Mask"), "", ICON_MASK_WHITE)) {
-		if (slot_layer_is_mask(l)) {
+		if (slot_layer_is_mask(l) || slot_layer_is_filter(l)) {
 			context_set_layer(l->parent);
 		}
 		l = g_context->layer;
 
-		slot_layer_t *m = layers_new_mask(false, l, -1);
+		i32_map_t    *pointers = tab_layers_init_layer_map();
+		slot_layer_t *m        = layers_new_mask(false, l, -1);
+		for (i32 i = 0; i < project_materials->length; ++i) {
+			slot_material_t *mat = project_materials->buffer[i];
+			tab_layers_remap_layer_pointers(mat->canvas->nodes, tab_layers_fill_layer_map(pointers));
+		}
 		sys_notify_on_next_frame(&tab_layers_button_new_layer_clear, m);
 		g_context->layer_preview_dirty = true;
 		history_new_white_mask();
 		sys_notify_on_next_frame(&tab_layers_button_new_update_fill_layers, NULL);
 	}
 	if (ui_menu_button(tr("Fill Mask"), "", ICON_MASK_FILL)) {
-		if (slot_layer_is_mask(l)) {
+		if (slot_layer_is_mask(l) || slot_layer_is_filter(l)) {
 			context_set_layer(l->parent);
 		}
 		l = g_context->layer;
 
-		slot_layer_t *m = layers_new_mask(false, l, -1);
+		i32_map_t    *pointers = tab_layers_init_layer_map();
+		slot_layer_t *m        = layers_new_mask(false, l, -1);
+		for (i32 i = 0; i < project_materials->length; ++i) {
+			slot_material_t *mat = project_materials->buffer[i];
+			tab_layers_remap_layer_pointers(mat->canvas->nodes, tab_layers_fill_layer_map(pointers));
+		}
 		sys_notify_on_next_frame(&tab_layers_button_new_to_fill_layer, m);
 		g_context->layer_preview_dirty = true;
 		history_new_fill_mask();
 		sys_notify_on_next_frame(&tab_layers_button_new_update_fill_layers, NULL);
+	}
+	if (ui_menu_button(tr("Filter"), "", ICON_FILTER)) {
+		if (slot_layer_is_mask(l) || slot_layer_is_filter(l)) {
+			context_set_layer(l->parent);
+		}
+		layers_create_filter();
 	}
 	ui->enabled = !slot_layer_is_group(g_context->layer) && !slot_layer_is_in_group(g_context->layer);
 	if (ui_menu_button(tr("Group"), "", ICON_FOLDER)) {
@@ -1067,6 +1131,41 @@ void tab_layers_button_new(char *text) {
 	}
 }
 
+void tab_layers_apply_filter(i32 filter) {
+	g_context->layer_filter = filter;
+	char *filter_name       = NULL;
+	if (filter > 0 && filter <= project_paint_objects->length) {
+		filter_name = project_paint_objects->buffer[filter - 1]->base->name;
+	}
+	else if (filter > project_paint_objects->length) {
+		string_array_t *atlases = project_get_used_atlases();
+		if (atlases != NULL) {
+			filter_name = atlases->buffer[filter - project_paint_objects->length - 1];
+		}
+	}
+	for (i32 i = 0; i < project_paint_objects->length; ++i) {
+		mesh_object_t *p = project_paint_objects->buffer[i];
+		p->base->visible = filter == 0 || (filter_name != NULL && string_equals(p->base->name, filter_name)) || project_is_atlas_object(p);
+	}
+	if (filter == 0 && g_context->merged_object_is_atlas) {
+		util_mesh_merge(NULL);
+	}
+	else if (filter > project_paint_objects->length) {
+		mesh_object_t_array_t *visibles = any_array_create_from_raw((void *[]){}, 0);
+		for (i32 i = 0; i < project_paint_objects->length; ++i) {
+			mesh_object_t *p = project_paint_objects->buffer[i];
+			if (p->base->visible) {
+				any_array_push(visibles, p);
+			}
+		}
+		util_mesh_merge(visibles);
+	}
+	layers_set_object_mask();
+	util_uv_uvmap_cached       = false;
+	g_context->ddirty          = 2;
+	render_path_raytrace_ready = false;
+}
+
 void tab_layers_combo_filter() {
 	string_array_t *ar = any_array_create_from_raw(
 	    (void *[]){
@@ -1088,28 +1187,7 @@ void tab_layers_combo_filter() {
 	filter_handle->i           = g_context->layer_filter;
 	g_context->layer_filter    = ui_combo(filter_handle, ar, tr("Filter"), false, UI_ALIGN_LEFT, true);
 	if (filter_handle->changed) {
-		for (i32 i = 0; i < project_paint_objects->length; ++i) {
-			mesh_object_t *p           = project_paint_objects->buffer[i];
-			char          *filter_name = ar->buffer[g_context->layer_filter];
-			p->base->visible           = g_context->layer_filter == 0 || string_equals(p->base->name, filter_name) || project_is_atlas_object(p);
-		}
-		if (g_context->layer_filter == 0 && g_context->merged_object_is_atlas) { // All
-			util_mesh_merge(NULL);
-		}
-		else if (g_context->layer_filter > project_paint_objects->length) { // Atlas
-			mesh_object_t_array_t *visibles = any_array_create_from_raw((void *[]){}, 0);
-			for (i32 i = 0; i < project_paint_objects->length; ++i) {
-				mesh_object_t *p = project_paint_objects->buffer[i];
-				if (p->base->visible) {
-					any_array_push(visibles, p);
-				}
-			}
-			util_mesh_merge(visibles);
-		}
-		layers_set_object_mask();
-		util_uv_uvmap_cached       = false;
-		g_context->ddirty          = 2;
-		render_path_raytrace_ready = false;
+		tab_layers_apply_filter(g_context->layer_filter);
 	}
 }
 
@@ -1189,7 +1267,7 @@ void tab_layers_draw_full(ui_handle_t *htab) {
 			}
 			// Open / close group
 			slot_layer_t *l            = g_context->layer;
-			bool          has_children = slot_layer_is_group(l) || (slot_layer_is_layer(l) && slot_layer_get_masks(l, false) != NULL);
+			bool          has_children = tab_layers_has_children(l);
 			if (has_children && ui->is_key_pressed && ui->key_code == KEY_CODE_RETURN) {
 				l->show_panel                                     = !l->show_panel;
 				ui_base_hwnds->buffer[TAB_AREA_SIDEBAR0]->redraws = 2;

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "iron_global.h"
 #include "iron_array.h"
+#include "iron_global.h"
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -45,7 +45,7 @@ typedef enum {
 } iron_window_mode_t;
 
 typedef enum {
-	IRON_WINDOW_FEATURES_NONE = 0,
+	IRON_WINDOW_FEATURES_NONE        = 0,
 	IRON_WINDOW_FEATURES_RESIZABLE   = 1,
 	IRON_WINDOW_FEATURES_MINIMIZABLE = 2,
 	IRON_WINDOW_FEATURES_MAXIMIZABLE = 4,
@@ -102,6 +102,7 @@ void                iron_stop(void);
 void                iron_set_keep_screen_on(bool on);
 void                iron_exec_async(const char *path, char *argv[]);
 extern volatile int iron_exec_async_done;
+extern char        *iron_exec_async_output_file;
 
 void iron_copy_to_clipboard(const char *text);
 void iron_set_update_callback(void (*callback)(void));
@@ -338,6 +339,6 @@ void        iron_internal_gamepad_trigger_axis(int gamepad, int axis, float valu
 void        iron_internal_gamepad_trigger_button(int gamepad, int button, float value);
 #endif
 
-i32 iron_sys_command(char *cmd);
+i32             iron_sys_command(char *cmd);
 string_array_t *iron_open_dialog(char *filter_list, char *default_path, bool open_multiple);
-char *iron_save_dialog(char *filter_list, char *default_path);
+char           *iron_save_dialog(char *filter_list, char *default_path);

@@ -35,13 +35,7 @@ void import_asset_run(char *path, f32 drop_x, f32 drop_y, bool show_box, bool hd
 	}
 
 	if (path_is_mesh(path)) {
-		if (g_context->tool == TOOL_TYPE_GIZMO) {
-			// project_import_mesh_box(path, false, false, tab_meshes_import_mesh_done);
-			project_import_mesh_box(path, false, false, tab_scene_import_mesh_done);
-		}
-		else {
-			show_box ? project_import_mesh_box(path, true, true, NULL) : import_mesh_run(path, true, true);
-		}
+		show_box ? project_import_mesh_box(path, true, true, NULL) : import_mesh_run(path, true, true);
 		if (drop_x > 0) {
 			ui_box_click_to_hide = false; // Prevent closing when going back to window after drag and drop
 		}
@@ -66,7 +60,7 @@ void import_asset_run(char *path, f32 drop_x, f32 drop_y, bool show_box, bool hd
 
 		if (g_context->tool == TOOL_TYPE_COLORID && project_asset_names->length == 1) {
 			ui_header_handle->redraws = 2;
-			g_context->ddirty       = 2;
+			g_context->ddirty         = 2;
 		}
 	}
 	else if (path_is_project(path)) {

@@ -14,7 +14,8 @@ f32 uniforms_ext_f32_link(object_t *object, material_data_t *mat, char *link) {
 		bool decal_mask = decal && operator_shortcut(string("%s+%s", any_map_get(config_keymap, "decal_mask"), any_map_get(config_keymap, "action_paint")),
 		                                             SHORTCUT_TYPE_DOWN);
 		f32  brush_decal_mask_radius = g_context->brush_decal_mask_radius;
-		brush_decal_mask_radius *= g_context->paint2d ? 0.35 * ui_view2d_pan_scale : 2.0;
+		bool paint2d                 = g_context->paint2d || g_context->paint2d_view;
+		brush_decal_mask_radius *= 2.0;
 		f32 radius = decal_mask ? brush_decal_mask_radius : g_context->brush_radius;
 		f32 val    = (radius * g_context->brush_nodes_radius) / 15.0;
 		if (g_config->pressure_radius && pen_down("tip")) {
@@ -22,10 +23,13 @@ f32 uniforms_ext_f32_link(object_t *object, material_data_t *mat, char *link) {
 		}
 		f32 scale2d = (900 / (float)base_h()) * g_config->window_scale;
 		if (!decal) {
-			val *= g_context->paint2d ? 0.5 * 0.5 * scale2d * ui_view2d_pan_scale : 2;
+			val *= paint2d ? 0.5 * 0.5 * scale2d * ui_view2d_pan_scale : 2;
+		}
+		else if (decal_mask) {
+			val *= paint2d ? 0.5 * 0.5 * scale2d * ui_view2d_pan_scale : scale2d;
 		}
 		else {
-			val *= scale2d; // Projection ratio
+			val *= paint2d ? 0.5 * 0.5 * scale2d * ui_view2d_pan_scale : scale2d * 2.0;
 		}
 		return val;
 	}
@@ -64,22 +68,17 @@ f32 uniforms_ext_f32_link(object_t *object, material_data_t *mat, char *link) {
 		if (g_config->pressure_hardness && pen_down("tip")) {
 			val *= pen_pressure * g_config->pressure_sensitivity;
 		}
-		if (g_context->paint2d) {
-			val *= 1.0 / (float)ui_view2d_pan_scale;
-		}
-		else {
-			val *= val;
-		}
+		val *= val;
 		return val;
 	}
 	else if (string_equals(link, "_brush_scale")) {
-		if (g_context->tool == TOOL_TYPE_GIZMO) {
-			i32 atlas_w      = config_get_scene_atlas_res();
-			i32 item_w       = config_get_layer_res();
-			i32 atlas_stride = atlas_w / (float)item_w;
-			return atlas_stride;
-		}
-		bool fill = g_context->layer->fill_layer != NULL;
+		// if (g_context->tool == TOOL_TYPE_CURSOR) {
+		// 	i32 atlas_w      = config_get_scene_atlas_res();
+		// 	i32 item_w       = config_get_layer_res();
+		// 	i32 atlas_stride = atlas_w / (float)item_w;
+		// 	return atlas_stride;
+		// }
+		bool fill = g_context->layer->fill_material != NULL;
 		f32  val  = (fill ? g_context->layer->scale : g_context->brush_scale) * g_context->brush_nodes_scale;
 		return val;
 	}
@@ -88,6 +87,15 @@ f32 uniforms_ext_f32_link(object_t *object, material_data_t *mat, char *link) {
 	}
 	else if (string_equals(link, "_dilate_radius")) {
 		return util_uv_dilatemap != NULL ? g_config->dilate_radius : 0.0;
+	}
+	else if (string_equals(link, "_particle_radius")) {
+		i32 idx           = g_context->particle_index;
+		f32 speed         = (physics_world_active != NULL && g_context->particles[idx].body != NULL)
+		                        ? physics_world_get_speed(physics_world_active, g_context->particles[idx].body)
+		                        : 0.0f;
+		f32 vel_scale     = fminf(speed / 0.12f, 1.0f);
+		f32 contact_scale = 1.0f - fminf(g_context->particles[idx].contact_time, 1.0f);
+		return fmaxf(g_context->brush_radius * vel_scale * contact_scale, 0.1f);
 	}
 	else if (string_equals(link, "_decal_layer_dim")) {
 		vec4_t sc = mat4_get_scale(g_context->layer->decal_mat);
@@ -109,15 +117,7 @@ f32 uniforms_ext_f32_link(object_t *object, material_data_t *mat, char *link) {
 		return g_context->picked_color->height;
 	}
 	else if (string_equals(link, "_taa_blend")) {
-		if (render_path_base_taa_frame == 0) {
-			return 0.0;
-		}
-		if (g_context->ddirty > 1 || g_context->pdirty > 0) {
-			camera_object_taa_frames = 2;
-			return 0.5;
-		}
-		camera_object_taa_frames = 6;
-		return 0.833;
+		return scene_camera->frame == 0 ? 0.0 : 0.5;
 	}
 	if (parser_material_script_links != NULL) {
 		string_array_t *keys = map_keys(parser_material_script_links);
@@ -152,7 +152,7 @@ vec2_t uniforms_ext_vec2_link(object_t *object, material_data_t *mat, char *link
 	}
 	else if (string_equals(link, "_brush_angle")) {
 		f32 brush_angle = g_context->brush_angle + g_context->brush_nodes_angle;
-		f32 angle       = g_context->layer->fill_layer != NULL ? g_context->layer->angle : brush_angle;
+		f32 angle       = g_context->layer->fill_material != NULL ? g_context->layer->angle : brush_angle;
 		angle *= (math_pi() / 180.0);
 		if (g_config->pressure_angle && pen_down("tip")) {
 			angle *= pen_pressure * g_config->pressure_sensitivity;
@@ -165,7 +165,7 @@ vec2_t uniforms_ext_vec2_link(object_t *object, material_data_t *mat, char *link
 f32 uniforms_ext_vec2d(f32 x) {
 	// Transform from 3d viewport coord to 2d view coord
 	g_context->paint2d_view = false;
-	f32 res                   = (x * base_w() - base_w()) / (float)ui_view2d_ww;
+	f32 res                 = (x * base_w() - base_w()) / (float)ui_view2d_ww;
 	g_context->paint2d_view = true;
 	return res;
 }
@@ -184,8 +184,8 @@ vec4_t uniforms_ext_vec3_link(object_t *object, material_data_t *mat, char *link
 			x     = uniforms_ext_vec2d(x);
 			lastx = uniforms_ext_vec2d(lastx);
 		}
-		f32 angle                     = math_atan2(-y + lasty, x - lastx) - math_pi() / 2.0;
-		v                             = (vec4_t){math_cos(angle), math_sin(angle), allow_paint ? 1 : 0, 1.0};
+		f32 angle                   = math_atan2(-y + lasty, x - lastx) - math_pi() / 2.0;
+		v                           = (vec4_t){math_cos(angle), math_sin(angle), allow_paint ? 1 : 0, 1.0};
 		g_context->prev_paint_vec_x = g_context->last_paint_vec_x;
 		g_context->prev_paint_vec_y = g_context->last_paint_vec_y;
 		return v;
@@ -201,12 +201,12 @@ vec4_t uniforms_ext_vec3_link(object_t *object, material_data_t *mat, char *link
 	}
 	else if (string_equals(link, "_picker_base")) {
 		v = (vec4_t){color_get_rb(g_context->picked_color->base) / 255.0, color_get_gb(g_context->picked_color->base) / 255.0,
-		                color_get_bb(g_context->picked_color->base) / 255.0, 1.0};
+		             color_get_bb(g_context->picked_color->base) / 255.0, 1.0};
 		return v;
 	}
 	else if (string_equals(link, "_picker_normal")) {
 		v = (vec4_t){color_get_rb(g_context->picked_color->normal) / 255.0, color_get_gb(g_context->picked_color->normal) / 255.0,
-		                color_get_bb(g_context->picked_color->normal) / 255.0, 1.0};
+		             color_get_bb(g_context->picked_color->normal) / 255.0, 1.0};
 		return v;
 	}
 	else if (string_equals(link, "_particle_hit")) {
@@ -215,6 +215,10 @@ vec4_t uniforms_ext_vec3_link(object_t *object, material_data_t *mat, char *link
 	}
 	else if (string_equals(link, "_particle_hit_last")) {
 		v = (vec4_t){g_context->last_particle_hit_x, g_context->last_particle_hit_y, g_context->last_particle_hit_z, 1.0};
+		return v;
+	}
+	else if (string_equals(link, "_camera_right")) {
+		v = camera_object_right_world(scene_camera);
 		return v;
 	}
 	return v;
@@ -258,12 +262,11 @@ vec4_t uniforms_ext_vec4_link(object_t *object, material_data_t *mat, char *link
 		bool decal_mask = context_is_decal_mask_paint();
 		f32  val        = (g_context->brush_radius * g_context->brush_nodes_radius) / 15.0;
 		f32  scale2d    = (900 / (float)base_h()) * g_config->window_scale;
-		val *= scale2d; // Projection ratio
+		val *= g_context->paint2d ? 0.5 * 0.5 * scale2d * ui_view2d_pan_scale : scale2d * 2.0;
 		vec4_t v = (vec4_t){g_context->decal_x, g_context->decal_y, decal_mask ? 1 : 0, val};
 		if (g_context->paint2d) {
 			v.x = uniforms_ext_vec2d(v.x);
 		}
-
 		return v;
 	}
 
@@ -332,10 +335,6 @@ gpu_texture_t *uniforms_ext_tex_link(object_t *object, material_data_t *mat, cha
 	}
 	else if (string_equals(link, "_texbrushstencil")) {
 		return g_context->brush_stencil_image;
-	}
-	else if (string_equals(link, "_texparticle")) {
-		render_target_t *rt = any_map_get(render_path_render_targets, "texparticle");
-		return rt->_image;
 	}
 	else if (string_equals(link, "_texuvmap")) {
 		if (!util_uv_uvmap_cached) {

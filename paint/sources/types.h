@@ -18,13 +18,13 @@ typedef struct slot_layer {
 	char                 *name;
 	char                 *ext;
 	bool                  visible;
-	struct slot_layer    *parent;   // Group (for layers) or layer (for masks)
+	struct slot_layer    *parent;   // Group (for layers) or layer (for masks and filters)
 	struct gpu_texture   *texpaint; // Base or mask
 	struct gpu_texture   *texpaint_nor;
 	struct gpu_texture   *texpaint_pack;
 	struct gpu_texture   *texpaint_preview; // Layer preview
 	f32                   mask_opacity;     // Opacity mask
-	struct slot_material *fill_layer;
+	struct slot_material *fill_material;
 	bool                  show_panel;
 	blend_type_t          blending;
 	i32                   object_mask;
@@ -45,6 +45,13 @@ typedef struct slot_layer {
 	bool                  paint_subs;
 	mat4_t                decal_mat; // Decal layer
 	struct gpu_texture   *texpaint_sculpt;
+	f32_array_t          *path_points;        // uv-space [x, y, ..]
+	f32_array_t          *path_points_world;  // world-space [x, y, z, ..]
+	f32_array_t          *path_points_camera; // [loc.xyzw, rot.xyzw, aspect, ..] at time of point placement
+	i32_array_t          *path_points_parent;
+	i32                   path_tool;
+	bool                  path_curved;
+	struct slot_material *path_material;
 } slot_layer_t;
 
 typedef struct slot_font {
@@ -191,6 +198,8 @@ typedef struct context {
 	struct ui_handle           *show_envmap_handle;
 	bool                        show_envmap_blur;
 	struct ui_handle           *show_envmap_blur_handle;
+	bool                        capturing_screenshot;
+	bool                        capture_background;
 	f32                         envmap_angle;
 	f32                         light_angle;
 	bool                        cull_backfaces;
@@ -221,7 +230,6 @@ typedef struct context {
 	bool                        show_compass;
 	i32                         project_type;
 	i32                         project_aspect_ratio;
-	struct mesh_object_t_array *project_objects;
 	f32                         last_paint_vec_x;
 	f32                         last_paint_vec_y;
 	f32                         prev_paint_vec_x;
@@ -253,6 +261,7 @@ typedef struct context {
 	struct gpu_texture         *mask_preview_rgba32;
 	struct slot_layer          *mask_preview_last;
 	bool                        colorid_picked;
+	bool                        colorid_viewport_mask;
 	bool                        material_preview;
 	mat4_t                      saved_camera;
 	tool_type_t                 color_picker_previous_tool;
@@ -262,6 +271,7 @@ typedef struct context {
 	bool                        picker_select_material;
 	struct ui_handle           *picker_mask_handle;
 	bool                        pick_pos_nor_tex;
+	bool                        pick_object_id;
 	f32                         posx_picked;
 	f32                         posy_picked;
 	f32                         posz_picked;
@@ -281,7 +291,6 @@ typedef struct context {
 	bool                        write_icon_on_export;
 	struct gpu_texture         *text_tool_image;
 	char                       *text_tool_text;
-	struct material_data       *particle_material;
 	i32                         layer_filter;
 	struct brush_output_node   *brush_output_node_inst;
 	void (*run_brush)(void *, i32);
@@ -326,7 +335,6 @@ typedef struct context {
 	f32                  brush_nodes_hardness;
 	bool                 brush_directional;
 	f32                  brush_radius;
-	struct ui_handle    *brush_radius_handle;
 	f32                  brush_scale_x;
 	f32                  brush_decal_mask_radius;
 	struct ui_handle    *brush_decal_mask_radius_handle;
@@ -361,6 +369,8 @@ typedef struct context {
 	bool                 sym_y;
 	bool                 sym_z;
 	struct ui_handle    *fill_type_handle;
+	struct ui_handle    *blur_type_handle;
+	i32                  blur_type;
 	bool                 paint2d;
 	i32                  maximized_sidebar_width;
 	i32                  drag_dest;
@@ -380,8 +390,32 @@ typedef struct context {
 	f32                  last_particle_hit_x;
 	f32                  last_particle_hit_y;
 	f32                  last_particle_hit_z;
-	struct tween_anim   *particle_timer;
 	struct physics_body *paint_body;
+	struct {
+		f32                  hit_x;
+		f32                  hit_y;
+		f32                  hit_z;
+		f32                  hit_last_x;
+		f32                  hit_last_y;
+		f32                  hit_last_z;
+		f32                  hit_nor_x;
+		f32                  hit_nor_y;
+		f32                  hit_nor_z;
+		f32                  contact_time;
+		struct tween_anim   *timer;
+		struct physics_body *body;
+		struct object       *bullet;
+	} particles[32];
+	i32 particle_index;
+	f32 particle_friction;
+	f32 particle_bounciness;
+	f32 particle_gravity_x;
+	f32 particle_gravity_y;
+	f32 particle_gravity_z;
+	f32 particle_lifetime;
+	f32 particle_mass;
+	f32 particle_random;
+	f32 particle_spawn_distance;
 } context_t;
 
 typedef struct node_shader {
@@ -503,11 +537,13 @@ typedef struct project_format {
 	struct ui_node_canvas_t_array *material_nodes;
 	struct ui_node_canvas_t_array *material_groups;
 	struct buffer_t_array         *material_icons;
+	struct material_data2_t_array *material_datas;
 	struct string_array           *font_assets;
 	struct layer_data_t_array     *layer_datas;
 	struct mesh_data_t_array      *mesh_datas;
 	struct string_array           *mesh_assets;
 	struct buffer_t_array         *mesh_icons;
+	struct f32_array_t_array      *mesh_transforms;
 	struct i32_array              *atlas_objects;
 	struct string_array           *atlas_names;
 	struct string_array           *script_datas;
@@ -546,7 +582,7 @@ typedef struct layer_data {
 	i32               uv_type;
 	struct f32_array *decal_mat;
 	f32               opacity_mask;
-	i32               fill_layer;
+	i32               fill_material;
 	i32               object_mask;
 	i32               blending;
 	i32               parent;
@@ -565,6 +601,13 @@ typedef struct layer_data {
 	bool              paint_emis;
 	bool              paint_subs;
 	i32               uv_map;
+	f32_array_t      *path_points;
+	f32_array_t      *path_points_world;
+	f32_array_t      *path_points_camera;
+	i32_array_t      *path_points_parent;
+	i32               path_tool;
+	bool              path_curved;
+	i32               path_material;
 } layer_data_t;
 
 typedef struct shader_out {
@@ -714,6 +757,12 @@ typedef struct buffer_t_array {
 	int        length;
 	int        capacity;
 } buffer_t_array_t;
+
+typedef struct f32_array_t_array {
+	f32_array_t **buffer;
+	int           length;
+	int           capacity;
+} f32_array_t_array_t;
 
 typedef struct slot_material_t_array {
 	slot_material_t **buffer;
@@ -882,6 +931,25 @@ typedef struct layer_data_t_array {
 	int            length;
 	int            capacity;
 } layer_data_t_array_t;
+
+typedef struct material_data2 {
+	bool paint_base;
+	bool paint_opac;
+	bool paint_occ;
+	bool paint_rough;
+	bool paint_met;
+	bool paint_nor;
+	bool paint_height;
+	bool paint_emis;
+	bool paint_subs;
+	int  opac_mode;
+} material_data2_t;
+
+typedef struct material_data2_t_array {
+	material_data2_t **buffer;
+	int                length;
+	int                capacity;
+} material_data2_t_array_t;
 
 typedef struct ui_node_t_array {
 	ui_node_t **buffer;

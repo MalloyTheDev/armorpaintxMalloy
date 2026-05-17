@@ -106,6 +106,17 @@ i32 util_encode_buffers_size(buffer_t_array_t *buffers) {
 	return size;
 }
 
+i32 util_encode_f32_arrays_size(f32_array_t_array_t *arrays) {
+	if (arrays == NULL) {
+		return 0;
+	}
+	i32 size = 0;
+	for (i32 i = 0; i < arrays->length; ++i) {
+		size += arrays->buffer[i]->length * 4;
+	}
+	return size;
+}
+
 i32 util_encode_layer_data_size(layer_data_t_array_t *datas) {
 	if (datas == NULL) {
 		return 0;
@@ -133,11 +144,12 @@ i32 util_encode_layer_data_size(layer_data_t_array_t *datas) {
 buffer_t *util_encode_project(project_t *raw) {
 	i32 size = 32 * 1024 * 1024 + util_encode_layer_data_size(raw->layer_datas) + util_encode_mesh_data_size(raw->mesh_datas) +
 	           util_encode_packed_assets_size(raw->packed_assets) + util_encode_buffers_size(raw->brush_icons) + util_encode_buffers_size(raw->material_icons) +
-	           util_encode_buffers_size(raw->mesh_icons);
+	           util_encode_buffers_size(raw->mesh_icons) + util_encode_f32_arrays_size(raw->mesh_transforms);
 	buffer_t *encoded = buffer_create(size);
 
 	armpack_encode_start(encoded->buffer);
-	armpack_encode_map(25);
+	armpack_encode_map(27);
+
 	armpack_encode_string("version");
 	armpack_encode_string(raw->version);
 	armpack_encode_string("assets");
@@ -256,6 +268,37 @@ buffer_t *util_encode_project(project_t *raw) {
 		armpack_encode_null();
 	}
 
+	armpack_encode_string("material_datas");
+	if (raw->material_datas != NULL) {
+		armpack_encode_array(raw->material_datas->length);
+		for (i32 i = 0; i < raw->material_datas->length; ++i) {
+			armpack_encode_map(10);
+			armpack_encode_string("paint_base");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_base);
+			armpack_encode_string("paint_opac");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_opac);
+			armpack_encode_string("paint_occ");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_occ);
+			armpack_encode_string("paint_rough");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_rough);
+			armpack_encode_string("paint_met");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_met);
+			armpack_encode_string("paint_nor");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_nor);
+			armpack_encode_string("paint_height");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_height);
+			armpack_encode_string("paint_emis");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_emis);
+			armpack_encode_string("paint_subs");
+			armpack_encode_bool(raw->material_datas->buffer[i]->paint_subs);
+			armpack_encode_string("opac_mode");
+			armpack_encode_i32(raw->material_datas->buffer[i]->opac_mode);
+		}
+	}
+	else {
+		armpack_encode_null();
+	}
+
 	armpack_encode_string("font_assets");
 	armpack_encode_array_string(raw->font_assets);
 
@@ -263,7 +306,7 @@ buffer_t *util_encode_project(project_t *raw) {
 	if (raw->layer_datas != NULL) {
 		armpack_encode_array(raw->layer_datas->length);
 		for (i32 i = 0; i < raw->layer_datas->length; ++i) {
-			armpack_encode_map(28);
+			armpack_encode_map(35);
 			armpack_encode_string("name");
 			armpack_encode_string(raw->layer_datas->buffer[i]->name);
 			armpack_encode_string("res");
@@ -282,8 +325,8 @@ buffer_t *util_encode_project(project_t *raw) {
 			armpack_encode_array_f32(raw->layer_datas->buffer[i]->decal_mat);
 			armpack_encode_string("opacity_mask");
 			armpack_encode_f32(raw->layer_datas->buffer[i]->opacity_mask);
-			armpack_encode_string("fill_layer");
-			armpack_encode_i32(raw->layer_datas->buffer[i]->fill_layer);
+			armpack_encode_string("fill_material");
+			armpack_encode_i32(raw->layer_datas->buffer[i]->fill_material);
 			armpack_encode_string("object_mask");
 			armpack_encode_i32(raw->layer_datas->buffer[i]->object_mask);
 			armpack_encode_string("blending");
@@ -320,6 +363,20 @@ buffer_t *util_encode_project(project_t *raw) {
 			armpack_encode_bool(raw->layer_datas->buffer[i]->paint_subs);
 			armpack_encode_string("uv_map");
 			armpack_encode_i32(raw->layer_datas->buffer[i]->uv_map);
+			armpack_encode_string("path_points");
+			armpack_encode_array_f32(raw->layer_datas->buffer[i]->path_points);
+			armpack_encode_string("path_points_world");
+			armpack_encode_array_f32(raw->layer_datas->buffer[i]->path_points_world);
+			armpack_encode_string("path_points_camera");
+			armpack_encode_array_f32(raw->layer_datas->buffer[i]->path_points_camera);
+			armpack_encode_string("path_points_parent");
+			armpack_encode_array_i32(raw->layer_datas->buffer[i]->path_points_parent);
+			armpack_encode_string("path_tool");
+			armpack_encode_i32(raw->layer_datas->buffer[i]->path_tool);
+			armpack_encode_string("path_curved");
+			armpack_encode_bool(raw->layer_datas->buffer[i]->path_curved);
+			armpack_encode_string("path_material");
+			armpack_encode_i32(raw->layer_datas->buffer[i]->path_material);
 		}
 	}
 	else {
@@ -341,6 +398,18 @@ buffer_t *util_encode_project(project_t *raw) {
 	else {
 		armpack_encode_null();
 	}
+
+	armpack_encode_string("mesh_transforms");
+	if (raw->mesh_transforms != NULL) {
+		armpack_encode_array(raw->mesh_transforms->length);
+		for (i32 i = 0; i < raw->mesh_transforms->length; ++i) {
+			armpack_encode_array_f32(raw->mesh_transforms->buffer[i]);
+		}
+	}
+	else {
+		armpack_encode_null();
+	}
+
 	armpack_encode_string("atlas_objects");
 	armpack_encode_array_i32(raw->atlas_objects);
 	armpack_encode_string("atlas_names");

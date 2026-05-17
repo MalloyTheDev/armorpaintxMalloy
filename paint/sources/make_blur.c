@@ -1,7 +1,7 @@
 
 #include "global.h"
 
-char                *str_get_smudge_tool_weight = "\
+char *str_get_smudge_tool_weight = "\
 fun get_smudge_tool_weight(i: int): float { \
 	if (i == 0) { return 1.0 / 28.0; } \
 	if (i == 1) { return 2.0 / 28.0; } \
@@ -13,7 +13,7 @@ fun get_smudge_tool_weight(i: int): float { \
 } \
 ";
 
-char                *str_get_blur_tool_weight   = "\
+char *str_get_blur_tool_weight = "\
 fun get_blur_tool_weight(i: int): float { \
 	if (i == 0) { return 0.034619 / 2.0; } \
 	if (i == 1) { return 0.044859 / 2.0; } \
@@ -61,7 +61,7 @@ void make_blur_run(node_shader_t *kong) {
 
 	node_shader_add_constant(kong, "texpaint_size: float2", "_texpaint_size");
 	node_shader_write_frag(kong, "var blur_step: float = 1.0 / constants.texpaint_size.x;");
-	if (g_context->tool == TOOL_TYPE_SMUDGE) {
+	if (g_context->blur_type == BLUR_TYPE_SMUDGE) {
 		// node_shader_write_frag(kong, "const blur_weight: float[7] = {1.0 / 28.0, 2.0 / 28.0, 3.0 / 28.0, 4.0 / 28.0, 5.0 / 28.0, 6.0 / 28.0, 7.0 / 28.0};");
 		node_shader_add_function(kong, str_get_smudge_tool_weight);
 		node_shader_add_constant(kong, "brush_direction: float3", "_brush_direction");

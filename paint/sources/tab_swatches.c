@@ -29,7 +29,7 @@ void tab_swatches_delete_swatch(swatch_color_t *swatch) {
 void tab_swatches_draw_menu() {
 	i32 i = _tab_swatches_draw_i;
 
-	if (ui_menu_button(tr("Duplicate"), "", ICON_DUPLICATE)) {
+	if (ui_menu_button(tr("Duplicate"), "ctrl+d", ICON_DUPLICATE)) {
 		context_set_swatch(project_clone_swatch(g_context->swatch));
 		any_array_push(g_project->swatches, g_context->swatch);
 	}
@@ -214,7 +214,7 @@ void tab_swatches_draw(ui_handle_t *htab) {
 
 				if (state == UI_STATE_STARTED) {
 					context_set_swatch(g_project->swatches->buffer[i]);
-					base_drag_off_x = -(mouse_x - uix - ui->_window_x - 2 * slotw);
+					base_drag_off_x = -(mouse_x - uix - ui->_window_x);
 					base_drag_off_y = -(mouse_y - uiy - ui->_window_y + 1);
 					gc_unroot(base_drag_swatch);
 					base_drag_swatch = g_context->swatch;
@@ -269,6 +269,10 @@ void tab_swatches_draw(ui_handle_t *htab) {
 		if (in_focus && ui->is_delete_down && g_project->swatches->length > 1) {
 			ui->is_delete_down = false;
 			tab_swatches_delete_swatch(g_context->swatch);
+		}
+		if (in_focus && ui->is_ctrl_down && ui->is_key_pressed && ui->key_code == KEY_CODE_D) {
+			context_set_swatch(project_clone_swatch(g_context->swatch));
+			any_array_push(g_project->swatches, g_context->swatch);
 		}
 		if (in_focus) {
 			i32 i = array_index_of(g_project->swatches, g_context->swatch);

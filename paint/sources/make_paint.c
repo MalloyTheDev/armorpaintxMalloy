@@ -6,7 +6,7 @@ bool make_paint_is_raytraced_bake() {
 }
 
 string_array_t *make_paint_color_attachments() {
-	if (g_context->tool == TOOL_TYPE_COLORID) {
+	if (g_context->tool == TOOL_TYPE_COLORID || g_context->tool == TOOL_TYPE_CURSOR) {
 		string_array_t *res = any_array_create_from_raw(
 		    (void *[]){
 		        "RGBA32",
@@ -19,6 +19,15 @@ string_array_t *make_paint_color_attachments() {
 		    (void *[]){
 		        "RGBA128",
 		        "RGBA128",
+		    },
+		    2);
+		return res;
+	}
+	if (g_context->tool == TOOL_TYPE_PICKER && slot_layer_is_mask(g_context->layer)) {
+		string_array_t *res = any_array_create_from_raw(
+		    (void *[]){
+		        "RGBA32",
+		        "RGBA32",
 		    },
 		    2);
 		return res;
@@ -159,8 +168,9 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 		make_bake_set_color_writes(con_paint);
 	}
 
-	if (g_context->tool == TOOL_TYPE_COLORID || g_context->tool == TOOL_TYPE_PICKER || g_context->tool == TOOL_TYPE_MATERIAL) {
-		make_colorid_picker_run(kong);
+	if (g_context->tool == TOOL_TYPE_COLORID || g_context->tool == TOOL_TYPE_PICKER || g_context->tool == TOOL_TYPE_MATERIAL ||
+	    g_context->tool == TOOL_TYPE_CURSOR) {
+		make_picking_run(kong);
 		con_paint->data->shader_from_source = true;
 		gpu_create_shaders_from_kong(node_shader_get(kong), &con_paint->data->vertex_shader, &con_paint->data->fragment_shader,
 		                             &con_paint->data->_->vertex_shader_size, &con_paint->data->_->fragment_shader_size);
@@ -180,7 +190,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 
 	node_shader_write_vert(kong, "output.pos = float4(tpos, 0.0, 1.0);");
 
-	bool decal_layer = g_context->layer->fill_layer != NULL && g_context->layer->uv_type == UV_TYPE_PROJECT;
+	bool decal_layer = g_context->layer->fill_material != NULL && g_context->layer->uv_type == UV_TYPE_PROJECT;
 	if (decal_layer) {
 		node_shader_add_constant(kong, "WVP: float4x4", "_decal_layer_matrix");
 	}
@@ -197,7 +207,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 	node_shader_write_attrib_frag(kong, "sp.y = 1.0 - sp.y;");
 	node_shader_write_attrib_frag(kong, "sp.z -= 0.0001;"); // small bias
 
-	uv_type_t uv_type = g_context->layer->fill_layer != NULL ? g_context->layer->uv_type : g_context->brush_paint;
+	uv_type_t uv_type = g_context->layer->fill_material != NULL ? g_context->layer->uv_type : g_context->brush_paint;
 	if (uv_type == UV_TYPE_PROJECT) {
 		kong->frag_ndcpos = true;
 	}
@@ -218,7 +228,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 	node_shader_add_constant(kong, "brush_hardness: float", "_brush_hardness");
 
 	if (g_context->tool == TOOL_TYPE_BRUSH || g_context->tool == TOOL_TYPE_ERASER || g_context->tool == TOOL_TYPE_CLONE || g_context->tool == TOOL_TYPE_BLUR ||
-	    g_context->tool == TOOL_TYPE_SMUDGE || g_context->tool == TOOL_TYPE_PARTICLE || decal) {
+	    g_context->tool == TOOL_TYPE_PARTICLE || decal) {
 
 		bool depth_reject = !g_context->xray;
 		if (!g_config->brush_depth_reject) {
@@ -233,7 +243,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 			}
 		}
 
-		if (depth_reject) {
+		if (depth_reject && !particle) {
 			node_shader_write_frag(kong, "if (sp.z > sample_lod(gbufferD, sampler_linear, sp.xy, 0.0).r - 0.00008) { discard; }");
 		}
 
@@ -266,7 +276,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 		node_shader_add_out(kong, "tex_coord_pick: float2");
 		node_shader_write_vert(kong, "output.tex_coord_pick = input.tex;");
 		if (g_context->colorid_picked) {
-			make_discard_color_id(kong);
+			make_discard_color_id(kong, "tex_coord_pick");
 		}
 		if (face_fill) {
 			make_discard_face(kong);
@@ -282,7 +292,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 
 	make_texcoord_run(kong);
 
-	if (g_context->tool == TOOL_TYPE_CLONE || g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_SMUDGE) {
+	if (g_context->tool == TOOL_TYPE_CLONE || g_context->tool == TOOL_TYPE_BLUR) {
 		node_shader_add_texture(kong, "gbuffer2", NULL);
 		node_shader_add_constant(kong, "gbuffer_size: float2", "_gbuffer_size");
 		node_shader_add_texture(kong, "texpaint_undo", "_texpaint_undo");
@@ -301,7 +311,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 		parser_material_parse_subsurface        = g_context->material->paint_subs;
 		parser_material_parse_height            = g_context->material->paint_height;
 		parser_material_parse_height_as_channel = true;
-		uv_type_t uv_type                       = g_context->layer->fill_layer != NULL ? g_context->layer->uv_type : g_context->brush_paint;
+		uv_type_t uv_type                       = g_context->layer->fill_material != NULL ? g_context->layer->uv_type : g_context->brush_paint;
 		parser_material_triplanar               = uv_type == UV_TYPE_TRIPLANAR && !decal;
 		parser_material_sample_keep_aspect      = decal;
 		gc_unroot(parser_material_sample_uv_scale);
@@ -336,14 +346,10 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 			node_shader_write_frag(kong, "var opacity: float = mat_opacity;");
 		}
 
-		if (g_context->tool == TOOL_TYPE_GIZMO) {
-			node_shader_write_frag(kong, "opacity = 1.0;");
+		if (g_context->layer->fill_material == NULL) {
+			node_shader_write_frag(kong, "opacity *= constants.brush_opacity;");
 		}
-		else {
-			if (g_context->layer->fill_layer == NULL) {
-				node_shader_write_frag(kong, "opacity *= constants.brush_opacity;");
-			}
-		}
+
 		if (g_context->material->paint_emis) {
 			node_shader_write_frag(kong, string("var emis: float = %s;", emis));
 		}
@@ -376,7 +382,7 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 
 	if (g_context->brush_stencil_image != NULL &&
 	    (g_context->tool == TOOL_TYPE_BRUSH || g_context->tool == TOOL_TYPE_ERASER || g_context->tool == TOOL_TYPE_FILL || g_context->tool == TOOL_TYPE_CLONE ||
-	     g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_SMUDGE || g_context->tool == TOOL_TYPE_PARTICLE || decal)) {
+	     g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_PARTICLE || decal)) {
 		node_shader_add_texture(kong, "texbrushstencil", "_texbrushstencil");
 		node_shader_add_constant(kong, "texbrushstencil_size: float2", "_size(_texbrushstencil)");
 		node_shader_add_constant(kong, "stencil_transform: float4", "_stencil_transform");
@@ -500,13 +506,13 @@ node_shader_context_t *make_paint_run(material_t *data, material_context_t *matc
 		node_shader_write_frag(kong, "var out_a: float = sample_undo.a * (1.0 - str);");
 		node_shader_write_frag(kong, "output[0] = float4(sample_undo.rgb, out_a);");
 	}
-	else if ((g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_SMUDGE) && !is_mask) {
+	else if (g_context->tool == TOOL_TYPE_BLUR && !is_mask) {
 		node_shader_write_frag(kong, "var t_blur: float = str / max(blur_src_alpha, 0.0000001);");
 		node_shader_write_frag(kong, "var out_a: float = str + sample_undo.a * (1.0 - t_blur);");
 		node_shader_write_frag(kong,
 		                       "output[0] = float4((basecol * t_blur + sample_undo.rgb * sample_undo.a * (1.0 - t_blur)) / max(out_a, 0.0000001), out_a);");
 	}
-	else if (g_context->material->paint_opac_mode == OPACITY_MODE_TRANSLUC || g_context->tool == TOOL_TYPE_GIZMO || g_context->layer->fill_layer != NULL) {
+	else if (g_context->material->paint_opac_mode == OPACITY_MODE_TRANSLUC || g_context->layer->fill_material != NULL) {
 		node_shader_write_frag(kong, string("output[0] = float4(%s, %s);",
 		                                    make_material_blend_mode(kong, g_context->brush_blending, "sample_undo.rgb", "basecol", "str"), "mat_opacity"));
 	}

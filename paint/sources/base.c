@@ -20,6 +20,7 @@ i32            base_appx               = 0;
 i32            base_appy               = 0;
 i32            base_last_window_width  = 0;
 i32            base_last_window_height = 0;
+bool           base_start_arm_found    = false;
 i32            _base_material_count;
 i32            ui_base_border_started         = 0;
 ui_handle_t   *ui_base_border_handle          = NULL;
@@ -40,6 +41,8 @@ void base_on_background() {
 	// Release keys after alt-tab / win-tab
 	_key_up(KEY_CODE_ALT, NULL);
 	_key_up(KEY_CODE_WIN, NULL);
+	_key_up(KEY_CODE_CONTROL, NULL);
+	_key_up(KEY_CODE_SHIFT, NULL);
 }
 
 void base_on_pause() {}
@@ -58,7 +61,10 @@ void base_on_drop_files(char *drop_path) {
 }
 
 void base_init_on_start_arm(void *_) {
-	import_arm_run_project(project_filepath);
+	if (base_start_arm_found) {
+		import_arm_run_project(project_filepath);
+	}
+	g_context->tool = TOOL_TYPE_CURSOR;
 	// Auto-run script
 	if (g_project->script_datas != NULL && g_project->script_datas->length > 0) {
 		minic_ctx_t *ctx = minic_eval(g_project->script_datas->buffer[0]);
@@ -98,6 +104,9 @@ void base_material_dropped() {
 	else if (context_in_nodes()) {
 		ui_nodes_accept_material_drop(array_index_of(project_materials, base_drag_material));
 	}
+	else if (context_in_materials()) {
+		tab_materials_accept_material_drop(base_drag_material);
+	}
 	gc_unroot(base_drag_material);
 	base_drag_material = NULL;
 }
@@ -132,7 +141,8 @@ void base_update(void *_) {
 		iron_mouse_set_cursor(IRON_CURSOR_ARROW);
 	}
 
-	bool has_drag = base_drag_asset != NULL || base_drag_material != NULL || base_drag_layer != NULL || base_drag_file != NULL || base_drag_swatch != NULL;
+	bool has_drag = base_drag_asset != NULL || base_drag_material != NULL || base_drag_layer != NULL || base_drag_file != NULL || base_drag_swatch != NULL ||
+	                base_drag_brush != NULL || base_drag_font != NULL;
 
 	if (g_config->touch_ui) {
 		// Touch and hold to activate dragging
@@ -163,6 +173,10 @@ void base_update(void *_) {
 			base_drag_material = NULL;
 			gc_unroot(base_drag_layer);
 			base_drag_layer = NULL;
+			gc_unroot(base_drag_brush);
+			base_drag_brush = NULL;
+			gc_unroot(base_drag_font);
+			base_drag_font = NULL;
 		}
 		// Disable touch scrolling while dragging is active
 		ui_touch_control = !base_is_dragging;
@@ -187,6 +201,9 @@ void base_update(void *_) {
 			// Create mask
 			else if (context_in_layers() || context_in_2d_view(VIEW_2D_TYPE_LAYER)) {
 				layers_create_image_mask(base_drag_asset);
+			}
+			else if (context_in_textures()) {
+				tab_textures_accept_asset_drop(base_drag_asset);
 			}
 			gc_unroot(base_drag_asset);
 			base_drag_asset = NULL;
@@ -244,6 +261,20 @@ void base_update(void *_) {
 			gc_unroot(base_drag_layer);
 			base_drag_layer = NULL;
 		}
+		else if (base_drag_brush != NULL) {
+			if (context_in_brushes()) {
+				tab_brushes_accept_brush_drop(base_drag_brush);
+			}
+			gc_unroot(base_drag_brush);
+			base_drag_brush = NULL;
+		}
+		else if (base_drag_font != NULL) {
+			if (context_in_fonts()) {
+				tab_fonts_accept_font_drop(base_drag_font);
+			}
+			gc_unroot(base_drag_font);
+			base_drag_font = NULL;
+		}
 
 		iron_mouse_set_cursor(IRON_CURSOR_ARROW);
 		base_is_dragging = false;
@@ -259,7 +290,7 @@ void base_update(void *_) {
 		g_context->ddirty = 0;
 	}
 
-	if (g_context->tool == TOOL_TYPE_GIZMO) {
+	if (g_context->tool == TOOL_TYPE_CURSOR) {
 		if (keyboard_down("control") && keyboard_started("d")) {
 			sim_duplicate();
 		}
@@ -286,6 +317,10 @@ void base_update(void *_) {
 	}
 
 	compass_update();
+
+	if (g_config->workspace == WORKSPACE_PLAYER) {
+		player_update();
+	}
 }
 
 gpu_texture_t *base_get_drag_image() {
@@ -316,6 +351,12 @@ gpu_texture_t *base_get_drag_image() {
 	if (base_drag_material != NULL) {
 		return base_drag_material->image_icon;
 	}
+	if (base_drag_brush != NULL) {
+		return base_drag_brush->image_icon;
+	}
+	if (base_drag_font != NULL) {
+		return base_drag_font->image;
+	}
 	if (base_drag_layer != NULL && slot_layer_is_group(base_drag_layer)) {
 		gpu_texture_t *icons         = resource_get("icons.k");
 		rect_t        *folder_closed = resource_tile50(icons, ICON_FOLDER_FULL);
@@ -323,22 +364,22 @@ gpu_texture_t *base_get_drag_image() {
 		gc_unroot(base_drag_rect);
 		base_drag_rect = base_drag_layer->show_panel ? folder_open : folder_closed;
 		gc_root(base_drag_rect);
-		base_drag_tint = ui->ops->theme->LABEL_COL - 0x00202020;
+		base_drag_tint = base_darker(ui->ops->theme->LABEL_COL, 0x00202020);
 		return icons;
 	}
-	if (base_drag_layer != NULL && slot_layer_is_mask(base_drag_layer) && base_drag_layer->fill_layer == NULL) {
+	if (base_drag_layer != NULL && slot_layer_is_mask(base_drag_layer) && base_drag_layer->fill_material == NULL) {
 		tab_layers_make_mask_preview_rgba32(base_drag_layer);
 		return g_context->mask_preview_rgba32;
 	}
 	if (base_drag_layer != NULL) {
-		return base_drag_layer->fill_layer != NULL ? base_drag_layer->fill_layer->image_icon : base_drag_layer->texpaint_preview;
+		return base_drag_layer->fill_material != NULL ? base_drag_layer->fill_material->image_icon : base_drag_layer->texpaint_preview;
 	}
 	return NULL;
 }
 
 rect_t *base_get_drag_background() {
 	gpu_texture_t *icons = resource_get("icons.k");
-	if (base_drag_layer != NULL && !slot_layer_is_group(base_drag_layer) && base_drag_layer->fill_layer == NULL) {
+	if (base_drag_layer != NULL && !slot_layer_is_group(base_drag_layer) && base_drag_layer->fill_material == NULL) {
 		return resource_tile50(icons, ICON_CHECKER);
 	}
 	return NULL;
@@ -359,24 +400,19 @@ void base_init_undo_layers() {
 }
 
 void base_render(void *_) {
-	if (g_context->frame == 2) {
-		util_render_make_material_preview();
-		ui_base_hwnds->buffer[TAB_AREA_SIDEBAR1]->redraws = 2;
 
-		base_init_undo_layers();
-	}
-
-	if (g_context->tool == TOOL_TYPE_GIZMO) {
+	if (g_context->tool == TOOL_TYPE_CURSOR) {
 		sim_init();
 		sim_update();
 	}
 
 	if (g_context->frame == 2) {
+		util_render_make_material_preview();
+		ui_base_hwnds->buffer[TAB_AREA_SIDEBAR1]->redraws = 2;
+		base_init_undo_layers();
 		make_material_parse_mesh_material();
 		make_material_parse_paint_material(true);
-		g_context->ddirty          = 0;
-		g_context->camera_pivot    = g_config->camera_pivot;
-		g_context->camera_controls = g_config->camera_controls;
+		g_context->ddirty = 0;
 	}
 	else if (g_context->frame == 3) {
 		g_context->ddirty = 3;
@@ -411,6 +447,7 @@ void base_render(void *_) {
 
 	bool using_menu = ui_menu_show && mouse_y > ui_header_h;
 	base_ui_enabled = !ui_box_show && !using_menu && ui->combo_selected_handle == NULL;
+
 	if (ui_box_show) {
 		ui_box_render();
 	}
@@ -518,12 +555,12 @@ bool ui_base_picker_button() {
 }
 
 void ui_base_make_empty_envmap(i32 col) {
-	ui_base_viewport_col      = col;
-	u8_array_t *b             = u8_array_create(4);
-	b->buffer[0]              = color_get_rb(col);
-	b->buffer[1]              = color_get_gb(col);
-	b->buffer[2]              = color_get_bb(col);
-	b->buffer[3]              = 255;
+	ui_base_viewport_col    = col;
+	u8_array_t *b           = u8_array_create(4);
+	b->buffer[0]            = color_get_rb(col);
+	b->buffer[1]            = color_get_gb(col);
+	b->buffer[2]            = color_get_bb(col);
+	b->buffer[3]            = 255;
 	g_context->empty_envmap = gpu_create_texture_from_bytes(b, 1, 1, GPU_TEXTURE_FORMAT_RGBA32);
 }
 
@@ -541,11 +578,11 @@ void ui_base_init() {
 		ui_base_make_empty_envmap(base_theme->VIEWPORT_COL);
 	}
 	if (g_context->preview_envmap == NULL) {
-		u8_array_t *b               = u8_array_create(4);
-		b->buffer[0]                = 0;
-		b->buffer[1]                = 0;
-		b->buffer[2]                = 0;
-		b->buffer[3]                = 255;
+		u8_array_t *b             = u8_array_create(4);
+		b->buffer[0]              = 0;
+		b->buffer[1]              = 0;
+		b->buffer[2]              = 0;
+		b->buffer[3]              = 255;
 		g_context->preview_envmap = gpu_create_texture_from_bytes(b, 1, 1, GPU_TEXTURE_FORMAT_RGBA32);
 	}
 
@@ -556,7 +593,7 @@ void ui_base_init() {
 		g_context->default_radiance_mipmaps = scene_world->_->radiance_mipmaps;
 	}
 	scene_world->_->envmap = g_context->show_envmap ? g_context->saved_envmap : g_context->empty_envmap;
-	g_context->ddirty    = 1;
+	g_context->ddirty      = 1;
 
 	string_array_t *resources = any_array_create_from_raw(
 	    (void *[]){
@@ -603,12 +640,6 @@ void ui_base_init() {
 		sys_notify_on_next_frame(&ui_base_init_on_next_frame, NULL);
 	}
 
-	g_context->project_objects = any_array_create_from_raw((void *[]){}, 0);
-	for (i32 i = 0; i < scene_meshes->length; ++i) {
-		mesh_object_t *m = scene_meshes->buffer[i];
-		any_array_push(g_context->project_objects, m);
-	}
-
 	operator_register("view_top", ui_base_view_top);
 }
 
@@ -617,44 +648,8 @@ void ui_base_menu_draw_viewport_mode() {
 	mode_handle->i           = g_context->viewport_mode;
 	ui_text(tr("Viewport Mode"), UI_ALIGN_RIGHT, 0x00000000);
 
-	string_array_t *modes = any_array_create_from_raw(
-	    (void *[]){
-	        tr("Lit"),
-	        tr("Base Color"),
-	        tr("Normal"),
-	        tr("Occlusion"),
-	        tr("Roughness"),
-	        tr("Metallic"),
-	        tr("Opacity"),
-	        tr("Height"),
-	        tr("Emission"),
-	        tr("Subsurface"),
-	        tr("TexCoord"),
-	        tr("Object Normal"),
-	        tr("Material ID"),
-	        tr("Object ID"),
-	        tr("Mask"),
-	    },
-	    15);
-	string_array_t *shortcuts = any_array_create_from_raw(
-	    (void *[]){
-	        "l",
-	        "b",
-	        "n",
-	        "o",
-	        "r",
-	        "m",
-	        "a",
-	        "h",
-	        "e",
-	        "s",
-	        "t",
-	        "1",
-	        "2",
-	        "3",
-	        "4",
-	    },
-	    15);
+	string_array_t *modes     = base_get_viewport_modes();
+	string_array_t *shortcuts = base_get_viewport_mode_shortcuts();
 	if (gpu_raytrace_supported()) {
 		any_array_push(modes, tr("Path Traced"));
 		any_array_push(shortcuts, "p");
@@ -746,8 +741,7 @@ void ui_base_update_ui_on_next_frame(void *_) {
 }
 
 rect_t *ui_base_get_brush_stencil_rect() {
-	i32 w =
-	    math_floor(g_context->brush_stencil_image->width * (base_h() / (float)g_context->brush_stencil_image->height) * g_context->brush_stencil_scale);
+	i32     w = math_floor(g_context->brush_stencil_image->width * (base_h() / (float)g_context->brush_stencil_image->height) * g_context->brush_stencil_scale);
 	i32     h = math_floor(base_h() * g_context->brush_stencil_scale);
 	i32     x = math_floor(base_x() + g_context->brush_stencil_x * base_w());
 	i32     y = math_floor(base_y() + g_context->brush_stencil_y * base_h());
@@ -772,6 +766,9 @@ void ui_base_update_ui() {
 	if (!base_ui_enabled) {
 		return;
 	}
+
+	gizmo_update();
+	util_layer_update_path();
 
 	// Same mapping for paint and rotate (predefined in touch keymap)
 	if (context_in_3d_view()) {
@@ -815,9 +812,9 @@ void ui_base_update_ui() {
 		rect_t *r = ui_base_get_brush_stencil_rect();
 		if (mouse_started("left")) {
 			g_context->brush_stencil_scaling = ui_base_hit_rect(mouse_x, mouse_y, r->x - 8, r->y - 8, 16, 16) ||
-			                                     ui_base_hit_rect(mouse_x, mouse_y, r->x - 8, r->h + r->y - 8, 16, 16) ||
-			                                     ui_base_hit_rect(mouse_x, mouse_y, r->w + r->x - 8, r->y - 8, 16, 16) ||
-			                                     ui_base_hit_rect(mouse_x, mouse_y, r->w + r->x - 8, r->h + r->y - 8, 16, 16);
+			                                   ui_base_hit_rect(mouse_x, mouse_y, r->x - 8, r->h + r->y - 8, 16, 16) ||
+			                                   ui_base_hit_rect(mouse_x, mouse_y, r->w + r->x - 8, r->y - 8, 16, 16) ||
+			                                   ui_base_hit_rect(mouse_x, mouse_y, r->w + r->x - 8, r->h + r->y - 8, 16, 16);
 			f32 cosa = math_cos(-g_context->brush_stencil_angle);
 			f32 sina = math_sin(-g_context->brush_stencil_angle);
 			f32 ox   = 0;
@@ -835,8 +832,8 @@ void ui_base_update_ui() {
 				g_context->brush_stencil_scale += mouse_movement_x / 400.0 * mult;
 			}
 			else if (g_context->brush_stencil_rotating) {
-				f32 gizmo_x                      = r->x + r->w / 2.0;
-				f32 gizmo_y                      = r->y + r->h / 2.0;
+				f32 gizmo_x                    = r->x + r->w / 2.0;
+				f32 gizmo_y                    = r->y + r->h / 2.0;
 				g_context->brush_stencil_angle = -math_atan2(mouse_y - gizmo_y, mouse_x - gizmo_x) - math_pi() / 2.0;
 			}
 			else {
@@ -859,6 +856,7 @@ void ui_base_update_ui() {
 		g_context->brush_stencil_x += (old_w - new_w) / (float)base_w() / 2.0;
 		g_context->brush_stencil_y += (old_h - new_h) / (float)base_h() / 2.0;
 	}
+
 	bool set_clone_source =
 	    g_context->tool == TOOL_TYPE_CLONE &&
 	    operator_shortcut(string("%s+%s", any_map_get(config_keymap, "set_clone_source"), any_map_get(config_keymap, "action_paint")), SHORTCUT_TYPE_DOWN);
@@ -929,16 +927,15 @@ void ui_base_update_ui() {
 		}
 	}
 	else if (g_context->brush_time > 0) { // Brush released
-		g_context->brush_time       = 0;
-		g_context->prev_paint_vec_x = -1;
-		g_context->prev_paint_vec_y = -1;
-		// g_context->ddirty              = 3; // Keep accumulated samples for D3D12
+		g_context->brush_time        = 0;
+		g_context->prev_paint_vec_x  = -1;
+		g_context->prev_paint_vec_y  = -1;
 		g_context->brush_blend_dirty = true; // Update brush mask
 
 		g_context->layer_preview_dirty = true; // Update layer preview
 
 		// New color id picked, update fill layer
-		if (g_context->tool == TOOL_TYPE_COLORID && g_context->layer->fill_layer != NULL) {
+		if (g_context->tool == TOOL_TYPE_COLORID && g_context->layer->fill_material != NULL) {
 			sys_notify_on_next_frame(&ui_base_update_ui_on_next_frame, NULL);
 		}
 	}
@@ -969,15 +966,14 @@ void ui_base_update_ui() {
 		}
 		ui_base_hwnds->buffer[TAB_AREA_SIDEBAR0]->redraws = 2;
 	}
+
 	if (g_context->layer != NULL && g_context->layer_preview_dirty && !slot_layer_is_group(g_context->layer)) {
 		g_context->layer_preview_dirty = false;
 		g_context->mask_preview_last   = NULL;
 		// Update layer preview
-		slot_layer_t *l = g_context->layer;
-
+		slot_layer_t  *l      = g_context->layer;
 		gpu_texture_t *target = l->texpaint_preview;
 		if (target != NULL) {
-
 			gpu_texture_t *source = l->texpaint;
 			draw_begin(target, true, 0x00000000);
 			// draw_set_pipeline(raw.layer.is_mask() ? pipes_copy8 : pipes_copy);
@@ -988,6 +984,7 @@ void ui_base_update_ui() {
 			ui_base_hwnds->buffer[TAB_AREA_SIDEBAR0]->redraws = 2;
 		}
 	}
+
 	bool undo_pressed = operator_shortcut(any_map_get(config_keymap, "edit_undo"), SHORTCUT_TYPE_STARTED);
 	bool redo_pressed =
 	    operator_shortcut(any_map_get(config_keymap, "edit_redo"), SHORTCUT_TYPE_STARTED) || (keyboard_down("control") && keyboard_started("y"));
@@ -1016,8 +1013,6 @@ void ui_base_update_ui() {
 	else if (redo_pressed) {
 		history_redo();
 	}
-
-	gizmo_update();
 }
 
 void ui_base_update(void *_) {
@@ -1091,11 +1086,9 @@ void ui_base_update(void *_) {
 	if (keyboard_started(any_map_get(config_keymap, "view_distract_free")) || (keyboard_started("escape") && !ui_base_show && !ui_box_show)) {
 		ui_base_toggle_distract_free();
 	}
-	// if (g_config->experimental && keyboard_started("f5") && g_config->workspace != WORKSPACE_PLAYER) {
-	// 	g_config->workspace = WORKSPACE_PLAYER;
-	// 	base_update_workspace();
-	// }
-	if (g_config->experimental && keyboard_started("f5")) {
+	if (g_config->experimental && keyboard_started("f5") && g_config->workspace != WORKSPACE_PLAYER) {
+		// g_config->workspace = WORKSPACE_PLAYER;
+		// base_update_workspace();
 		base_run_in_player();
 	}
 
@@ -1122,7 +1115,7 @@ void ui_base_update(void *_) {
 				}
 				else if (operator_shortcut(any_map_get(config_keymap, "brush_angle"), SHORTCUT_TYPE_DOWN)) {
 					g_context->brush_angle += mouse_movement_x / 5.0;
-					i32 i                    = math_floor(g_context->brush_angle);
+					i32 i                  = math_floor(g_context->brush_angle);
 					g_context->brush_angle = i % 360;
 					if (g_context->brush_angle < 0)
 						g_context->brush_angle += 360;
@@ -1138,9 +1131,8 @@ void ui_base_update(void *_) {
 				}
 				else {
 					g_context->brush_radius += mouse_movement_x / 150.0;
-					g_context->brush_radius           = math_max(0.01, math_min(4.0, g_context->brush_radius));
-					g_context->brush_radius           = math_round(g_context->brush_radius * 100) / 100.0;
-					g_context->brush_radius_handle->f = g_context->brush_radius;
+					g_context->brush_radius = math_max(0.01, math_min(4.0, g_context->brush_radius));
+					g_context->brush_radius = math_round(g_context->brush_radius * 100) / 100.0;
 				}
 				ui_header_handle->redraws = 2;
 			}
@@ -1195,9 +1187,6 @@ void ui_base_update(void *_) {
 			else if (operator_shortcut(any_map_get(config_keymap, "tool_blur"), SHORTCUT_TYPE_STARTED)) {
 				context_select_tool(TOOL_TYPE_BLUR);
 			}
-			else if (operator_shortcut(any_map_get(config_keymap, "tool_smudge"), SHORTCUT_TYPE_STARTED)) {
-				context_select_tool(TOOL_TYPE_SMUDGE);
-			}
 			else if (operator_shortcut(any_map_get(config_keymap, "tool_particle"), SHORTCUT_TYPE_STARTED)) {
 				context_select_tool(TOOL_TYPE_PARTICLE);
 			}
@@ -1207,11 +1196,11 @@ void ui_base_update(void *_) {
 			else if (operator_shortcut(any_map_get(config_keymap, "tool_bake"), SHORTCUT_TYPE_STARTED)) {
 				context_select_tool(TOOL_TYPE_BAKE);
 			}
-			else if (operator_shortcut(any_map_get(config_keymap, "tool_gizmo"), SHORTCUT_TYPE_STARTED)) {
-				context_select_tool(TOOL_TYPE_GIZMO);
-			}
 			else if (operator_shortcut(any_map_get(config_keymap, "tool_material"), SHORTCUT_TYPE_STARTED)) {
 				context_select_tool(TOOL_TYPE_MATERIAL);
+			}
+			else if (operator_shortcut(any_map_get(config_keymap, "tool_cursor"), SHORTCUT_TYPE_STARTED)) {
+				context_select_tool(TOOL_TYPE_CURSOR);
 			}
 			else if (operator_shortcut(any_map_get(config_keymap, "swap_brush_eraser"), SHORTCUT_TYPE_STARTED)) {
 				context_select_tool(g_context->tool == TOOL_TYPE_BRUSH ? TOOL_TYPE_ERASER : TOOL_TYPE_BRUSH);
@@ -1221,7 +1210,7 @@ void ui_base_update(void *_) {
 		// Radius
 		if (g_context->tool == TOOL_TYPE_BRUSH || g_context->tool == TOOL_TYPE_ERASER || g_context->tool == TOOL_TYPE_DECAL ||
 		    g_context->tool == TOOL_TYPE_TEXT || g_context->tool == TOOL_TYPE_CLONE || g_context->tool == TOOL_TYPE_BLUR ||
-		    g_context->tool == TOOL_TYPE_SMUDGE || g_context->tool == TOOL_TYPE_PARTICLE) {
+		    g_context->tool == TOOL_TYPE_PARTICLE) {
 			if (operator_shortcut(any_map_get(config_keymap, "brush_radius"), SHORTCUT_TYPE_STARTED) ||
 			    operator_shortcut(any_map_get(config_keymap, "brush_opacity"), SHORTCUT_TYPE_STARTED) ||
 			    operator_shortcut(any_map_get(config_keymap, "brush_angle"), SHORTCUT_TYPE_STARTED) ||
@@ -1234,15 +1223,13 @@ void ui_base_update(void *_) {
 			}
 			else if (operator_shortcut(any_map_get(config_keymap, "brush_radius_decrease"), SHORTCUT_TYPE_REPEAT)) {
 				g_context->brush_radius -= ui_base_get_radius_increment();
-				g_context->brush_radius           = math_max(math_round(g_context->brush_radius * 100) / 100.0, 0.01);
-				g_context->brush_radius_handle->f = g_context->brush_radius;
-				ui_header_handle->redraws           = 2;
+				g_context->brush_radius   = math_max(math_round(g_context->brush_radius * 100) / 100.0, 0.01);
+				ui_header_handle->redraws = 2;
 			}
 			else if (operator_shortcut(any_map_get(config_keymap, "brush_radius_increase"), SHORTCUT_TYPE_REPEAT)) {
 				g_context->brush_radius += ui_base_get_radius_increment();
-				g_context->brush_radius           = math_round(g_context->brush_radius * 100) / 100.0;
-				g_context->brush_radius_handle->f = g_context->brush_radius;
-				ui_header_handle->redraws           = 2;
+				g_context->brush_radius   = math_round(g_context->brush_radius * 100) / 100.0;
+				ui_header_handle->redraws = 2;
 			}
 			else if (decal_mask) {
 				if (operator_shortcut(string("%s+%s", any_map_get(config_keymap, "decal_mask"), any_map_get(config_keymap, "brush_radius_decrease")),
@@ -1250,14 +1237,14 @@ void ui_base_update(void *_) {
 					g_context->brush_decal_mask_radius -= ui_base_get_radius_increment();
 					g_context->brush_decal_mask_radius           = math_max(math_round(g_context->brush_decal_mask_radius * 100) / 100.0, 0.01);
 					g_context->brush_decal_mask_radius_handle->f = g_context->brush_decal_mask_radius;
-					ui_header_handle->redraws                      = 2;
+					ui_header_handle->redraws                    = 2;
 				}
 				else if (operator_shortcut(string("%s+%s", any_map_get(config_keymap, "decal_mask"), any_map_get(config_keymap, "brush_radius_increase")),
 				                           SHORTCUT_TYPE_REPEAT)) {
 					g_context->brush_decal_mask_radius += ui_base_get_radius_increment();
 					g_context->brush_decal_mask_radius           = math_round(g_context->brush_decal_mask_radius * 100) / 100.0;
 					g_context->brush_decal_mask_radius_handle->f = g_context->brush_decal_mask_radius;
-					ui_header_handle->redraws                      = 2;
+					ui_header_handle->redraws                    = 2;
 				}
 			}
 		}
@@ -1404,60 +1391,130 @@ void ui_base_update(void *_) {
 		base_is_resizing      = false;
 	}
 
-	if (g_context->tool == TOOL_TYPE_PARTICLE && context_in_paint_area() && !g_context->paint2d) {
+	if (g_context->tool == TOOL_TYPE_PARTICLE) {
 		util_particle_init_physics();
 		physics_world_t *world = physics_world_active;
 		physics_world_update(world);
-		g_context->ddirty = 2;
-		g_context->rdirty = 2;
-		if (mouse_started("left")) {
-			if (g_context->particle_timer != NULL) {
-				tween_stop(g_context->particle_timer);
-				tween_anim_t *timer = g_context->particle_timer;
-				timer->done(timer->done_data);
-				g_context->particle_timer = NULL;
+
+		for (i32 i = 0; i < 32; ++i) {
+			if (g_context->particles[i].timer != NULL && g_context->particles[i].timer->delay <= 0) {
+				physics_body_remove(g_context->particles[i].body);
+				mesh_object_remove((mesh_object_t *)g_context->particles[i].bullet->ext);
+				memset(&g_context->particles[i], 0, sizeof(g_context->particles[i]));
 			}
-			history_push_undo           = true;
-			g_context->particle_hit_x = g_context->particle_hit_y = g_context->particle_hit_z = 0;
-			object_t      *o                                                                        = scene_spawn_object(".Sphere", NULL, true);
-			mesh_object_t *mo                                                                       = o->ext;
-			mo->base->name                                                                          = ".Bullet";
-			mo->base->visible                                                                       = true;
+		}
 
-			camera_object_t *camera    = scene_camera;
-			transform_t     *ct        = camera->base->transform;
-			mo->base->transform->loc   = (vec4_t){transform_world_x(ct), transform_world_y(ct), transform_world_z(ct), 1.0};
-			mo->base->transform->scale = (vec4_t){g_context->brush_radius * 0.2, g_context->brush_radius * 0.2, g_context->brush_radius * 0.2, 1.0};
-			transform_build_matrix(mo->base->transform);
+		bool any_active = false;
+		for (i32 i = 0; i < 32; ++i) {
+			if (g_context->particles[i].timer != NULL) {
+				any_active = true;
+				break;
+			}
+		}
+		if (any_active) {
+			g_context->ddirty = 2;
+			g_context->rdirty = 2;
+			iron_delay_idle_sleep();
+		}
 
-			physics_body_t *body = physics_body_create();
-			body->shape          = PHYSICS_SHAPE_SPHERE;
-			body->mass           = 1.0;
-			physics_body_init(body, mo->base);
+		static f64 particle_last_spawn_time = 0.0;
+		bool       particle_just_fired      = false;
+		if (mouse_down("left") && context_in_paint_area() && !g_context->paint2d && (mouse_started("left") || sys_time() - particle_last_spawn_time >= 0.2)) {
+			particle_last_spawn_time = sys_time();
 
-			ray_t *ray = raycast_get_ray(mouse_view_x(), mouse_view_y(), camera);
-			physics_body_apply_impulse(body, vec4_mult(ray->dir, 0.15));
+			i32 slot = -1;
+			for (i32 i = 0; i < 32; ++i) {
+				if (g_context->particles[i].timer == NULL) {
+					slot = i;
+					break;
+				}
+			}
+			if (slot >= 0) {
+				if (mouse_started("left")) {
+					history_push_undo            = true;
+					g_context->brush_blend_dirty = true;
+				}
 
-			g_context->particle_timer = tween_timer(5, &mesh_object_remove, mo);
+				object_t      *o  = scene_spawn_object(".Sphere", NULL, true);
+				mesh_object_t *mo = o->ext;
+				mo->base->name    = ".Bullet";
+				mo->base->visible = true;
+
+				util_render_pick_pos_nor_tex();
+				f32 nx            = g_context->norx_picked;
+				f32 ny            = g_context->nory_picked;
+				f32 nz            = g_context->norz_picked;
+				f32 sphere_radius = g_context->brush_radius * 0.1f;
+				f32 spawn_h       = -(sphere_radius + g_context->particle_spawn_distance) + 0.01;
+				mo->base->transform->loc =
+				    (vec4_t){g_context->posx_picked + nx * spawn_h, g_context->posy_picked + ny * spawn_h, g_context->posz_picked + nz * spawn_h, 1.0};
+				mo->base->transform->scale = (vec4_t){g_context->brush_radius * 0.2, g_context->brush_radius * 0.2, g_context->brush_radius * 0.2, 1.0};
+				transform_build_matrix(mo->base->transform);
+
+				physics_body_t *body = physics_body_create();
+				body->shape          = PHYSICS_SHAPE_SPHERE;
+				body->mass           = g_context->particle_mass;
+				physics_body_init(body, mo->base);
+
+				// Random direction
+				f32 rx   = math_random() * 2.0f - 1.0f;
+				f32 ry   = math_random() * 2.0f - 1.0f;
+				f32 rz   = math_random() * 2.0f - 1.0f;
+				f32 rlen = sqrtf(rx * rx + ry * ry + rz * rz);
+				if (rlen < 0.0001f)
+					rlen = 0.0001f;
+				rx /= rlen;
+				ry /= rlen;
+				rz /= rlen;
+				if (rx * nx + ry * ny + rz * nz < 0.0f) {
+					rx = -rx;
+					ry = -ry;
+					rz = -rz;
+				}
+				f32 r       = g_context->particle_random;
+				f32 dx      = nx + (rx - nx) * r;
+				f32 dy      = ny + (ry - ny) * r;
+				f32 dz      = nz + (rz - nz) * r;
+				f32 impulse = g_context->particle_spawn_distance * 30.0f;
+				physics_body_apply_impulse(body, (vec4_t){dx * impulse, dy * impulse, dz * impulse, 0.0});
+
+				g_context->particles[slot].body   = body;
+				g_context->particles[slot].bullet = mo->base;
+				g_context->particles[slot].timer  = tween_timer(g_context->particle_lifetime, NULL, NULL);
+				particle_just_fired               = true;
+			}
+		}
+
+		if (mouse_released("left")) {
+			g_context->layer_preview_dirty = true;
 		}
 
 #ifdef arm_physics
-
-		physics_pair_t_array_t *pairs = physics_world_get_contact_pairs(world, g_context->paint_body);
-		if (pairs != NULL) {
-			for (i32 i = 0; i < pairs->length; ++i) {
-				physics_pair_t *p                = pairs->buffer[i];
-				g_context->last_particle_hit_x = g_context->particle_hit_x != 0 ? g_context->particle_hit_x : p->pos_a_x;
-				g_context->last_particle_hit_y = g_context->particle_hit_y != 0 ? g_context->particle_hit_y : p->pos_a_y;
-				g_context->last_particle_hit_z = g_context->particle_hit_z != 0 ? g_context->particle_hit_z : p->pos_a_z;
-				g_context->particle_hit_x      = p->pos_a_x;
-				g_context->particle_hit_y      = p->pos_a_y;
-				g_context->particle_hit_z      = p->pos_a_z;
-				g_context->pdirty              = 1;
-				break; // 1 pair for now
+		if (!particle_just_fired) {
+			for (i32 i = 0; i < 32; ++i) {
+				if (g_context->particles[i].timer == NULL) {
+					continue;
+				}
+				physics_pair_t_array_t *pairs = physics_world_get_contact_pairs(world, g_context->particles[i].body);
+				if (pairs != NULL && pairs->length > 0) {
+					physics_pair_t *p                  = pairs->buffer[0];
+					g_context->particles[i].hit_last_x = g_context->particles[i].hit_x != 0 ? g_context->particles[i].hit_x : p->pos_a_x;
+					g_context->particles[i].hit_last_y = g_context->particles[i].hit_y != 0 ? g_context->particles[i].hit_y : p->pos_a_y;
+					g_context->particles[i].hit_last_z = g_context->particles[i].hit_z != 0 ? g_context->particles[i].hit_z : p->pos_a_z;
+					g_context->particles[i].hit_x      = p->pos_a_x;
+					g_context->particles[i].hit_y      = p->pos_a_y;
+					g_context->particles[i].hit_z      = p->pos_a_z;
+					g_context->particles[i].hit_nor_x  = p->nor_x;
+					g_context->particles[i].hit_nor_y  = p->nor_y;
+					g_context->particles[i].hit_nor_z  = p->nor_z;
+					g_context->particles[i].contact_time += sys_delta();
+					g_context->pdirty = 1;
+				}
+				else {
+					g_context->particles[i].hit_x = 0.0;
+				}
 			}
 		}
-
 #endif
 	}
 }
@@ -1525,8 +1582,8 @@ void ui_base_render_cursor(void *_) {
 	draw_set_color(0xffffffff);
 
 	g_context->view_index = g_context->view_index_last;
-	i32 mx                  = base_x() + g_context->paint_vec.x * base_w();
-	i32 my                  = base_y() + g_context->paint_vec.y * base_h();
+	i32 mx                = base_x() + g_context->paint_vec.x * base_w();
+	i32 my                = base_y() + g_context->paint_vec.y * base_h();
 	g_context->view_index = -1;
 
 	if (g_context->brush_stencil_image != NULL && g_context->tool != TOOL_TYPE_PICKER && g_context->tool != TOOL_TYPE_COLORID) {
@@ -1592,16 +1649,17 @@ void ui_base_render_cursor(void *_) {
 			if (!decal_mask) {
 				g_context->decal_x = g_context->paint_vec.x;
 				g_context->decal_y = g_context->paint_vec.y;
-				decal_alpha          = g_context->brush_opacity;
+				decal_alpha        = g_context->brush_opacity;
 			}
 
-			if (!g_config->brush_live) {
-				i32 psizex = math_floor(256 * UI_SCALE() * (g_context->brush_radius * g_context->brush_nodes_radius * g_context->brush_scale_x));
-				i32 psizey = math_floor(256 * UI_SCALE() * (g_context->brush_radius * g_context->brush_nodes_radius));
+			if (!g_config->brush_live && (!context_is_decal() || context_in_2d_view(VIEW_2D_TYPE_LAYER))) {
+				i32 psizex = math_floor(182 * 0.5 * 0.92 * UI_SCALE() * (g_context->brush_radius * g_context->brush_nodes_radius * g_context->brush_scale_x) *
+				                        ui_view2d_pan_scale);
+				i32 psizey = math_floor(182 * 0.5 * 0.92 * UI_SCALE() * (g_context->brush_radius * g_context->brush_nodes_radius) * ui_view2d_pan_scale);
 
 				g_context->view_index = g_context->view_index_last;
-				f32 decalx              = base_x() + g_context->decal_x * base_w() - psizex / 2.0;
-				f32 decaly              = base_y() + g_context->decal_y * base_h() - psizey / 2.0;
+				f32 decalx            = base_x() + g_context->decal_x * base_w() - psizex / 2.0;
+				f32 decaly            = base_y() + g_context->decal_y * base_h() - psizey / 2.0;
 				g_context->view_index = -1;
 
 				draw_set_color(color_from_floats(1, 1, 1, decal_alpha));
@@ -1613,8 +1671,7 @@ void ui_base_render_cursor(void *_) {
 			}
 		}
 		if (g_context->tool == TOOL_TYPE_BRUSH || g_context->tool == TOOL_TYPE_ERASER || g_context->tool == TOOL_TYPE_CLONE ||
-		    g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_SMUDGE || g_context->tool == TOOL_TYPE_PARTICLE ||
-		    (decal_mask && context_in_2d_view(VIEW_2D_TYPE_LAYER))) {
+		    g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_PARTICLE || (decal_mask && context_in_2d_view(VIEW_2D_TYPE_LAYER))) {
 			if (decal_mask) {
 				psize = math_floor(cursor_img->width * (g_context->brush_decal_mask_radius * g_context->brush_nodes_radius) * UI_SCALE());
 			}
@@ -1625,10 +1682,9 @@ void ui_base_render_cursor(void *_) {
 		}
 	}
 
-	if (g_context->brush_lazy_radius > 0 && !g_context->brush_locked &&
-	    (g_context->tool == TOOL_TYPE_BRUSH || g_context->tool == TOOL_TYPE_ERASER || g_context->tool == TOOL_TYPE_DECAL ||
-	     g_context->tool == TOOL_TYPE_TEXT || g_context->tool == TOOL_TYPE_CLONE || g_context->tool == TOOL_TYPE_BLUR ||
-	     g_context->tool == TOOL_TYPE_SMUDGE || g_context->tool == TOOL_TYPE_PARTICLE)) {
+	if (g_context->brush_lazy_radius > 0 && !g_context->brush_locked && !slot_layer_is_path(g_context->layer) &&
+	    (g_context->tool == TOOL_TYPE_BRUSH || g_context->tool == TOOL_TYPE_ERASER || g_context->tool == TOOL_TYPE_DECAL || g_context->tool == TOOL_TYPE_TEXT ||
+	     g_context->tool == TOOL_TYPE_CLONE || g_context->tool == TOOL_TYPE_BLUR || g_context->tool == TOOL_TYPE_PARTICLE)) {
 		draw_filled_rect(mx - 1, my - 1, 2, 2);
 		mx         = g_context->brush_lazy_x * base_w() + base_x();
 		my         = g_context->brush_lazy_y * base_h() + base_y();
@@ -1722,6 +1778,9 @@ void base_init() {
 		base_update_workflow();
 	}
 
+	g_context->camera_pivot    = g_config->camera_pivot;
+	g_context->camera_controls = g_config->camera_controls;
+
 	bool has_projects = g_config->recent_projects->length > 0;
 	if (g_config->splash_screen && has_projects) {
 		box_projects_show();
@@ -1733,16 +1792,16 @@ void base_init() {
 		gc_unroot(project_filepath);
 		project_filepath = start_arm;
 		gc_root(project_filepath);
-		args_player = true;
+		base_start_arm_found = true;
+		args_player          = true;
 	}
 
 	if (args_player) {
-		sys_notify_on_next_frame(&base_init_on_start_arm, NULL);
-		g_context->tool = TOOL_TYPE_GIZMO;
-		make_material_parse_paint_material(true);
+		// base_player_lock = true;
 		g_config->workspace = WORKSPACE_PLAYER;
 		base_update_workspace();
-		base_player_lock = true;
+		make_material_parse_paint_material(true);
+		sys_notify_on_next_frame(&base_init_on_start_arm, NULL);
 	}
 }
 
@@ -1865,7 +1924,7 @@ void base_resize() {
 		cam->data->ortho->buffer[3] = 2 * (sys_h() / (float)sys_w());
 	}
 	camera_object_build_proj(cam, -1.0);
-	render_path_base_taa_frame = 0;
+	scene_camera->frame = 0;
 
 	if (g_context->camera_type == CAMERA_TYPE_ORTHOGRAPHIC) {
 		viewport_update_camera_type(g_context->camera_type);
@@ -2006,7 +2065,7 @@ void base_toggle_fullscreen() {
 
 bool base_is_decal_layer() {
 	bool is_painting = g_context->tool != TOOL_TYPE_MATERIAL && g_context->tool != TOOL_TYPE_BAKE;
-	return is_painting && g_context->layer->fill_layer != NULL && g_context->layer->uv_type == UV_TYPE_PROJECT;
+	return is_painting && g_context->layer->fill_material != NULL && g_context->layer->uv_type == UV_TYPE_PROJECT;
 }
 
 void base_redraw_status() {
@@ -2075,6 +2134,10 @@ tab_draw_array_t_array_t *ui_base_init_hwnd_tabs() {
 	if (config_is_iphone()) {
 		array_splice(a2, 4, 1); // Swatches
 	}
+#endif
+
+#ifdef is_debug
+	any_array_push(a0, _draw_callback_create(tab_debug_draw));
 #endif
 
 	tab_draw_array_t_array_t *r = any_array_create_from_raw((void *[]){}, 0);
@@ -2186,7 +2249,7 @@ void ui_base_show_3d_view() {
 }
 
 void ui_base_toggle_browser() {
-	bool minimized                                   = g_config->layout->buffer[LAYOUT_SIZE_STATUS_H] <= (ui_statusbar_default_h * g_config->window_scale);
+	bool minimized                                 = g_config->layout->buffer[LAYOUT_SIZE_STATUS_H] <= (ui_statusbar_default_h * g_config->window_scale);
 	g_config->layout->buffer[LAYOUT_SIZE_STATUS_H] = minimized ? 240 : ui_statusbar_default_h;
 	g_config->layout->buffer[LAYOUT_SIZE_STATUS_H] = math_floor(g_config->layout->buffer[LAYOUT_SIZE_STATUS_H] * g_config->window_scale);
 	base_resize();
@@ -2273,19 +2336,21 @@ void base_update_workspace() {
 		ui_view2d_show    = false;
 		ui_nodes_show     = false;
 
-		ui_base_htabs->buffer[TAB_AREA_STATUS]->i          = 5; // Console
+		ui_base_htabs->buffer[TAB_AREA_STATUS]->i        = 5; // Console
 		g_config->layout_tabs->buffer[TAB_AREA_STATUS]   = 5;
-		ui_base_htabs->buffer[TAB_AREA_SIDEBAR0]->i        = 2; // Script
+		ui_base_htabs->buffer[TAB_AREA_SIDEBAR0]->i      = 2; // Script
 		g_config->layout_tabs->buffer[TAB_AREA_SIDEBAR0] = 2;
 
 		g_config->layout->buffer[LAYOUT_SIZE_STATUS_H]   = iron_window_height() * 0.3;
 		g_config->layout->buffer[LAYOUT_SIZE_SIDEBAR_W]  = iron_window_width() * 0.52;
-		float h                                            = UI_ELEMENT_H() + UI_ELEMENT_OFFSET() + 2;
+		float h                                          = UI_ELEMENT_H() + UI_ELEMENT_OFFSET() + 2;
 		g_config->layout->buffer[LAYOUT_SIZE_SIDEBAR_H0] = iron_window_height() - h;
 		g_config->layout->buffer[LAYOUT_SIZE_SIDEBAR_H1] = h;
+		render_path_resize();
 	}
 	else if (g_config->workspace == WORKSPACE_PLAYER) {
 		ui_base_show = false;
+		render_path_resize();
 	}
 
 	base_resize();
@@ -2297,7 +2362,7 @@ void base_update_workflow() {
 		ui_node_array_t *nodes = project_materials->buffer[i]->canvas->nodes;
 		for (i32 j = 0; j < nodes->length; ++j) {
 			if (string_equals(nodes->buffer[j]->type, "OUTPUT_MATERIAL_PBR")) {
-				nodes->buffer[j]->inputs->length = g_config->workflow == WORKFLOW_PBR ? 9 : 2;
+				nodes->buffer[j]->inputs->length          = g_config->workflow == WORKFLOW_PBR ? 9 : 2;
 				nodes->buffer[j]->inputs->buffer[0]->name = g_config->workflow == WORKFLOW_SCULPT ? tr("Displacement") : tr("Base Color");
 			}
 		}
@@ -2313,4 +2378,73 @@ void base_run_in_player() {
 	char *bin = iron_get_arg(0);
 	iron_sys_command(string("%s %s --player", bin, project_filepath));
 	// iron_exec_async()
+}
+
+uint32_t base_darker(uint32_t x, uint32_t y) {
+	uint32_t r  = ((x >> 16) & 0xff);
+	uint32_t g  = ((x >> 8) & 0xff);
+	uint32_t b  = ((x) & 0xff);
+	uint32_t ry = ((y >> 16) & 0xff);
+	uint32_t gy = ((y >> 8) & 0xff);
+	uint32_t by = ((y) & 0xff);
+	r           = r > ry ? r - ry : 0;
+	g           = g > gy ? g - gy : 0;
+	b           = b > by ? b - by : 0;
+	return (x & 0xff000000) | (r << 16) | (g << 8) | b;
+}
+
+string_array_t *base_get_viewport_modes() {
+	string_array_t *modes = any_array_create_from_raw(
+	    (void *[]){
+	        tr("Lit"),
+	        tr("Base Color"),
+	        tr("Normal"),
+	        tr("Occlusion"),
+	        tr("Roughness"),
+	        tr("Metallic"),
+	        tr("Opacity"),
+	        tr("Height"),
+	        tr("Emission"),
+	        tr("Subsurface"),
+	        tr("TexCoord"),
+	        tr("Object Normal"),
+	        tr("Material ID"),
+	        tr("Object ID"),
+	        tr("Mask"),
+	    },
+	    15);
+
+	if (gpu_raytrace_supported()) {
+		any_array_push(modes, tr("Path Traced"));
+	}
+
+	return modes;
+}
+
+string_array_t *base_get_viewport_mode_shortcuts() {
+	string_array_t *shortcuts = any_array_create_from_raw(
+	    (void *[]){
+	        "l",
+	        "b",
+	        "n",
+	        "o",
+	        "r",
+	        "m",
+	        "a",
+	        "h",
+	        "e",
+	        "s",
+	        "t",
+	        "1",
+	        "2",
+	        "3",
+	        "4",
+	    },
+	    15);
+
+	if (gpu_raytrace_supported()) {
+		any_array_push(shortcuts, "p");
+	}
+
+	return shortcuts;
 }

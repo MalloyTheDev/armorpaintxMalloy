@@ -33,29 +33,8 @@ void _kickstart() {
 
 	box_export_channels = any_array_create_from_raw(
 	    (void *[]){
-	        "base_r",
-	        "base_g",
-	        "base_b",
-	        "height",
-	        "metal",
-	        "nor_r",
-	        "nor_g",
-	        "nor_g_directx",
-	        "nor_b",
-	        "occ",
-	        "opac",
-	        "rough",
-	        "smooth",
-	        "emis",
-	        "subs",
-			"diff_r",
-			"diff_g",
-			"diff_b",
-			"spec_r",
-			"spec_g",
-			"spec_b",
-	        "0.0",
-	        "1.0",
+	        "base_r", "base_g", "base_b", "height", "metal",  "nor_r",  "nor_g",  "nor_g_directx", "nor_b",  "occ", "opac", "rough",
+	        "smooth", "emis",   "subs",   "diff_r", "diff_g", "diff_b", "spec_r", "spec_g",        "spec_b", "0.0", "1.0",
 	    },
 	    23);
 	gc_root(box_export_channels);
@@ -107,15 +86,14 @@ void _kickstart() {
 	        _tr("Text"),
 	        _tr("Clone"),
 	        _tr("Blur"),
-	        _tr("Smudge"),
 	        _tr("Particle"),
 	        _tr("ColorID"),
 	        _tr("Picker"),
 	        _tr("Bake"),
 	        _tr("Material"),
-	        _tr("Gizmo"),
+	        _tr("Cursor"),
 	    },
-	    14);
+	    13);
 	gc_root(ui_toolbar_tool_names);
 
 	ui_toolbar_tooltip_extras = any_array_create_from_raw(
@@ -133,9 +111,8 @@ void _kickstart() {
 	        "",
 	        "",
 	        "",
-	        "",
 	    },
-	    14);
+	    13);
 	gc_root(ui_toolbar_tooltip_extras);
 	uniforms_ext_ortho_p = mat4_ortho(-0.5, 0.5, -0.5, 0.5, -0.5, 0.5);
 

@@ -36,20 +36,20 @@ mesh_object_t_array_t *util_mesh_get_unique() {
 
 void util_mesh_merge(mesh_object_t_array_t *paint_objects) {
 	if (paint_objects == NULL) {
-		if (g_context->tool == TOOL_TYPE_GIZMO) {
-			paint_objects = util_mesh_get_unique();
-		}
-		else {
-			paint_objects = project_paint_objects;
-		}
+		// if (g_context->tool == TOOL_TYPE_CURSOR) {
+		// 	paint_objects = util_mesh_get_unique();
+		// }
+		// else {
+		paint_objects = project_paint_objects;
+		// }
 	}
 	if (paint_objects->length == 0) {
 		return;
 	}
 	g_context->merged_object_is_atlas = paint_objects->length < project_paint_objects->length;
-	i32 vlen                            = 0;
-	i32 ilen                            = 0;
-	f32 max_scale                       = 0.0;
+	i32 vlen                          = 0;
+	i32 ilen                          = 0;
+	f32 max_scale                     = 0.0;
 	for (i32 i = 0; i < paint_objects->length; ++i) {
 		vlen += paint_objects->buffer[i]->data->vertex_arrays->buffer[0]->values->length;
 		ilen += paint_objects->buffer[i]->data->index_array->length;
@@ -141,7 +141,7 @@ void util_mesh_merge(mesh_object_t_array_t *paint_objects) {
 		any_array_push(raw->vertex_arrays, va);
 	}
 	util_mesh_remove_merged();
-	mesh_data_t *md                           = mesh_data_create(raw);
+	mesh_data_t *md                         = mesh_data_create(raw);
 	g_context->merged_object                = mesh_object_create(md, g_context->paint_object->material);
 	g_context->merged_object->base->name    = string("%s_merged", g_context->paint_object->base->name);
 	g_context->merged_object->force_context = "paint";
@@ -420,22 +420,6 @@ void util_mesh_apply_displacement(gpu_texture_t *texpaint_pack, f32 strength, f3
 		va0->buffer[i * 4 + 2] -= math_floor(va0->buffer[i * 4 + 3] * h);
 	}
 	mesh_data_build_vertices(g->_->vertex_buffer, o->data->vertex_arrays);
-}
-
-void util_mesh_equirect_unwrap(raw_mesh_t *mesh) {
-	i32 verts  = math_floor(mesh->posa->length / 4.0);
-	mesh->texa = i16_array_create(verts * 2);
-	vec4_t n   = (vec4_t){0.0, 0.0, 0.0, 1.0};
-	for (i32 i = 0; i < verts; ++i) {
-		n = (vec4_t){mesh->posa->buffer[i * 4] / 32767.0, mesh->posa->buffer[i * 4 + 1] / 32767.0, mesh->posa->buffer[i * 4 + 2] / 32767.0, 1.0};
-		n = vec4_norm(n);
-		// Sphere projection
-		// mesh.texa[i * 2    ] = math_atan2(n.x, n.y) / (math_pi() * 2) + 0.5;
-		// mesh.texa[i * 2 + 1] = n.z * 0.5 + 0.5;
-		// Equirect
-		mesh->texa->buffer[i * 2]     = math_floor(((math_atan2(-n.z, n.x) + math_pi()) / (float)(math_pi() * 2)) * 32767);
-		mesh->texa->buffer[i * 2 + 1] = math_floor((math_acos(n.y) / (float)math_pi()) * 32767);
-	}
 }
 
 i32 util_mesh_decimate_sort(i32 *pa, i32 *pb) {

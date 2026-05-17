@@ -224,7 +224,11 @@ void import_arm_run_project(char *path) {
 	buffer_t  *b = data_get_blob(path);
 	project_t *project;
 	bool       import_as_mesh = false;
-	bool       is_cloud       = string_index_of(path, "/cloud/") >= 0;
+#ifdef IRON_WINDOWS
+	bool is_cloud = string_index_of(path, "\\cloud\\") >= 0;
+#else
+	bool is_cloud = string_index_of(path, "/cloud/") >= 0;
+#endif
 	if (import_arm_is_old(b) && !is_cloud) {
 		project = import_arm_from_old(b);
 	}
@@ -379,6 +383,12 @@ void import_arm_run_project(char *path) {
 		any_array_push(project_paint_objects, object);
 	}
 
+	transform_set_matrix(g_context->paint_object->base->transform, mat4_from_f32_array(project->mesh_transforms->buffer[0], 0));
+	for (i32 i = 1; i < project->mesh_datas->length; ++i) {
+		mesh_object_t *o = project_paint_objects->buffer[i];
+		transform_set_matrix(o->base->transform, mat4_from_f32_array(project->mesh_transforms->buffer[i], 0));
+	}
+
 	if (project->mesh_assets != NULL && project->mesh_assets->length > 0) {
 		char *file = project->mesh_assets->buffer[0];
 		char *abs  = data_is_abs(file) ? file : string("%s%s", base, file);
@@ -409,7 +419,6 @@ void import_arm_run_project(char *path) {
 	}
 
 	context_select_paint_object(context_main_object());
-	viewport_scale_to_bounds(2.0);
 	g_context->paint_object->skip_context   = "paint";
 	g_context->merged_object->base->visible = true;
 
@@ -425,15 +434,17 @@ void import_arm_run_project(char *path) {
 		render_target_t *blend0           = any_map_get(rts, "texpaint_blend0");
 		gpu_texture_t   *_texpaint_blend0 = blend0->_image;
 		gpu_delete_texture(_texpaint_blend0);
-		blend0->width                     = config_get_texture_res_x();
-		blend0->height                    = config_get_texture_res_y();
-		blend0->_image                    = gpu_create_render_target(config_get_texture_res_x(), config_get_texture_res_y(), GPU_TEXTURE_FORMAT_R8);
+		blend0->width  = config_get_texture_res_x();
+		blend0->height = config_get_texture_res_y();
+		blend0->_image = gpu_create_render_target(config_get_texture_res_x(), config_get_texture_res_y(), GPU_TEXTURE_FORMAT_R8);
+
 		render_target_t *blend1           = any_map_get(rts, "texpaint_blend1");
 		gpu_texture_t   *_texpaint_blend1 = blend1->_image;
 		gpu_delete_texture(_texpaint_blend1);
-		blend1->width                = config_get_texture_res_x();
-		blend1->height               = config_get_texture_res_y();
-		blend1->_image               = gpu_create_render_target(config_get_texture_res_x(), config_get_texture_res_y(), GPU_TEXTURE_FORMAT_R8);
+		blend1->width  = config_get_texture_res_x();
+		blend1->height = config_get_texture_res_y();
+		blend1->_image = gpu_create_render_target(config_get_texture_res_x(), config_get_texture_res_y(), GPU_TEXTURE_FORMAT_R8);
+
 		g_context->brush_blend_dirty = true;
 	}
 
@@ -515,6 +526,12 @@ void import_arm_run_project(char *path) {
 			l->paint_height_blend = ld->paint_height_blend;
 			l->paint_emis         = ld->paint_emis;
 			l->paint_subs         = ld->paint_subs;
+			l->path_points        = ld->path_points;
+			l->path_points_world  = ld->path_points_world;
+			l->path_points_camera = ld->path_points_camera;
+			l->path_points_parent = ld->path_points_parent;
+			l->path_tool          = ld->path_tool;
+			l->path_curved        = ld->path_curved;
 
 			gpu_delete_texture(_texpaint);
 			if (_texpaint_nor != NULL) {
@@ -546,6 +563,19 @@ void import_arm_run_project(char *path) {
 		ui_node_canvas_t *n = project->material_nodes->buffer[i];
 		import_arm_init_nodes(n->nodes);
 		g_context->material = slot_material_create(m0, n);
+
+		material_data2_t *md = project->material_datas->buffer[i];
+		g_context->material->paint_base = md->paint_base;
+		g_context->material->paint_opac = md->paint_opac;
+		g_context->material->paint_occ = md->paint_occ;
+		g_context->material->paint_rough = md->paint_rough;
+		g_context->material->paint_met = md->paint_met;
+		g_context->material->paint_nor = md->paint_nor;
+		g_context->material->paint_height = md->paint_height;
+		g_context->material->paint_emis = md->paint_emis;
+		g_context->material->paint_subs = md->paint_subs;
+		g_context->material->paint_opac_mode = md->opac_mode;
+
 		any_array_push(project_materials, g_context->material);
 	}
 
@@ -583,18 +613,20 @@ void import_arm_run_project(char *path) {
 		util_render_make_brush_preview();
 	}
 
-	// Fill layers
+	// Fill layers and path layers materials
 	for (i32 i = 0; i < project->layer_datas->length; ++i) {
 		layer_data_t *ld       = project->layer_datas->buffer[i];
 		slot_layer_t *l        = project_layers->buffer[i];
 		bool          is_group = ld->texpaint == NULL;
 		if (!is_group) {
-			l->fill_layer = ld->fill_layer > -1 ? project_materials->buffer[ld->fill_layer] : NULL;
+			l->fill_material = ld->fill_material > -1 ? project_materials->buffer[ld->fill_material] : NULL;
+			l->path_material = ld->path_material > -1 ? project_materials->buffer[ld->path_material] : NULL;
 		}
 	}
 
 	sys_notify_on_next_frame(&import_arm_run_project_on_next_frame, NULL);
 
+	base_update_workflow();
 	ui_base_hwnds->buffer[TAB_AREA_SIDEBAR0]->redraws = 2;
 	ui_base_hwnds->buffer[TAB_AREA_SIDEBAR1]->redraws = 2;
 	g_context->ddirty                                 = 4;

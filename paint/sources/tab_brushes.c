@@ -2,6 +2,7 @@
 #include "global.h"
 
 i32 _tab_brushes_draw_i;
+i32 tab_brushes_drag_pos = -1;
 
 void tab_brushes_draw_make_brush_preview(void *_) {
 	i32           i      = _tab_brushes_draw_i;
@@ -38,7 +39,7 @@ void tab_brushes_draw_context_menu() {
 		box_export_show_brush();
 	}
 
-	if (ui_menu_button(tr("Duplicate"), "", ICON_DUPLICATE)) {
+	if (ui_menu_button(tr("Duplicate"), "ctrl+d", ICON_DUPLICATE)) {
 		sys_notify_on_next_frame(&tab_brushes_draw_duplicate, NULL);
 	}
 
@@ -78,6 +79,11 @@ void tab_brushes_draw(ui_handle_t *htab) {
 		if (num == 0) {
 			return;
 		}
+
+		bool drag_pos_set = false;
+		f32  uix          = 0.0;
+		f32  uiy          = 0.0;
+		i32  imgw_val     = math_floor(50 * UI_SCALE());
 
 		for (i32 row = 0; row < math_floor(math_ceil(project_brushes->length / (float)num)); ++row) {
 			i32          mult = g_config->show_asset_names ? 2 : 1;
@@ -119,22 +125,38 @@ void tab_brushes_draw(ui_handle_t *htab) {
 					ui_fill(w + 1, -2, 2, w + 4, ui->ops->theme->HIGHLIGHT_COL);
 				}
 
-				f32 uix = ui->_x;
-				// let uiy: f32 = ui._y;
-				i32        tile  = UI_SCALE() > 1 ? 100 : 50;
+				uix      = ui->_x;
+				uiy      = ui->_y;
+				i32 tile = UI_SCALE() > 1 ? 100 : 50;
+
+				if (base_drag_brush != NULL && tab_brushes_drag_pos == i) {
+					ui_fill(-1, -2, 2, imgw_val + 4, ui->ops->theme->HIGHLIGHT_COL);
+				}
+
 				ui_state_t state = project_brushes->buffer[i]->preview_ready ? ui_image(img, 0xffffffff, -1.0)
 				                                                             : ui_sub_image(resource_get("icons.k"), -1, -1.0, tile * 5, tile, tile, tile);
+
+				if (state == UI_STATE_HOVERED && base_drag_brush != NULL) {
+					tab_brushes_drag_pos = (mouse_x > uix + ui->_window_x + imgw_val / 2.0) ? i + 1 : i;
+					drag_pos_set         = true;
+				}
+
 				if (state == UI_STATE_STARTED) {
 					if (g_context->brush != project_brushes->buffer[i]) {
 						context_select_brush(i);
 					}
+					base_drag_off_x = -(mouse_x - uix - ui->_window_x - 3);
+					base_drag_off_y = -(mouse_y - uiy - ui->_window_y + 1);
+					gc_unroot(base_drag_brush);
+					base_drag_brush = g_context->brush;
+					gc_root(base_drag_brush);
 					if (sys_time() - g_context->select_time < 0.2) {
 						ui_base_show_brush_nodes();
+						gc_unroot(base_drag_brush);
+						base_drag_brush  = NULL;
+						base_is_dragging = false;
 					}
 					g_context->select_time = sys_time();
-					// app_drag_off_x = -(mouse_x - uix - ui._windowX - 3);
-					// app_drag_off_y = -(mouse_y - uiy - ui._windowY + 1);
-					// app_drag_brush = raw.brush;
 				}
 				if (ui->is_hovered && ui->input_released_r) {
 					context_select_brush(i);
@@ -172,11 +194,25 @@ void tab_brushes_draw(ui_handle_t *htab) {
 			ui->_y += 6;
 		}
 
+		if (base_drag_brush != NULL && tab_brushes_drag_pos == project_brushes->length) {
+			ui->_x = uix;
+			ui->_y = uiy;
+			ui_fill(imgw_val + 1, -2, 2, imgw_val + 4, ui->ops->theme->HIGHLIGHT_COL);
+		}
+
+		if (!drag_pos_set) {
+			tab_brushes_drag_pos = -1;
+		}
+
 		bool in_focus = ui->input_x > ui->_window_x && ui->input_x < ui->_window_x + ui->_window_w && ui->input_y > ui->_window_y &&
 		                ui->input_y < ui->_window_y + ui->_window_h;
 		if (in_focus && ui->is_delete_down && project_brushes->length > 1) {
 			ui->is_delete_down = false;
 			tab_brushes_delete_brush(g_context->brush);
+		}
+		if (in_focus && ui->is_ctrl_down && ui->is_key_pressed && ui->key_code == KEY_CODE_D) {
+			_tab_brushes_draw_i = array_index_of(project_brushes, g_context->brush);
+			sys_notify_on_next_frame(&tab_brushes_draw_duplicate, NULL);
 		}
 		if (in_focus) {
 			i32 i = array_index_of(project_brushes, g_context->brush);
@@ -191,5 +227,18 @@ void tab_brushes_draw(ui_handle_t *htab) {
 				}
 			}
 		}
+	}
+}
+
+void tab_brushes_accept_brush_drop(slot_brush_t *brush) {
+	if (tab_brushes_drag_pos == -1) {
+		return;
+	}
+
+	i32 brush_pos = array_index_of(project_brushes, brush);
+	if (brush_pos != -1 && math_abs(brush_pos - tab_brushes_drag_pos) > 0) {
+		array_remove(project_brushes, brush);
+		i32 new_pos = tab_brushes_drag_pos - brush_pos > 0 ? tab_brushes_drag_pos - 1 : tab_brushes_drag_pos;
+		array_insert(project_brushes, new_pos, brush);
 	}
 }

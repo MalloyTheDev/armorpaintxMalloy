@@ -82,35 +82,14 @@ ui_node_canvas_t_array_t *import_arm_get_node_canvas_array(any_map_t *map, char 
 	return ar;
 }
 
-bool import_arm_is_version_4(buffer_t *b) {
-	bool has_version = b->buffer[10] == 118; // 'v'
-	bool has_four    = b->buffer[22] == 52;  // '4'
-	if (has_version && has_four) {
-		return true;
-	}
-	return false;
-}
-
-bool import_arm_is_version_3(buffer_t *b) {
-	bool has_version = b->buffer[10] == 118; // 'v'
-	bool has_three   = b->buffer[22] == 51;  // '3'
-	if (has_version && has_three) {
-		return true;
-	}
-	return false;
-}
-
-bool import_arm_is_version_2(buffer_t *b) {
-	bool has_version = b->buffer[10] == 118; // 'v'
-	bool has_two     = b->buffer[22] == 50;  // '2'
-	if (has_version && has_two) {
-		return true;
-	}
-	return false;
+bool import_arm_is_version(buffer_t *b, char n) {
+	bool has_v = b->buffer[10] == 118; // 'v'
+	bool has_n = b->buffer[22] == n;   // '4'
+	return has_v && has_n;
 }
 
 bool import_arm_is_old(buffer_t *b) {
-	return import_arm_is_version_2(b) || import_arm_is_version_3(b) || import_arm_is_version_4(b);
+	return !import_arm_is_version(b, manifest_version_project[0]);
 }
 
 project_t *import_arm_from_map_to_arm(any_map_t *old) {
@@ -119,7 +98,7 @@ project_t *import_arm_from_map_to_arm(any_map_t *old) {
 	project->assets    = any_map_get(old, "assets");
 	project->is_bgra   = armpack_map_get_i32(old, "is_bgra") > 0;
 
-	any_array_t *pas   = any_map_get(old, "packed_assets");
+	any_array_t *pas = any_map_get(old, "packed_assets");
 	if (pas != NULL) {
 		project->packed_assets = any_array_create_from_raw((void *[]){}, 0);
 		for (i32 i = 0; i < pas->length; ++i) {
@@ -138,9 +117,9 @@ project_t *import_arm_from_map_to_arm(any_map_t *old) {
 	project->camera_origin   = any_map_get(old, "camera_origin");
 	project->camera_fov      = armpack_map_get_f32(old, "camera_fov");
 
-	any_array_t *ss          = any_map_get(old, "swatches");
+	any_array_t *ss = any_map_get(old, "swatches");
 	if (ss != NULL) {
-		project->swatches        = any_array_create_from_raw((void *[]){}, 0);
+		project->swatches = any_array_create_from_raw((void *[]){}, 0);
 		for (i32 i = 0; i < ss->length; ++i) {
 			any_map_t      *old = ss->buffer[i];
 			swatch_color_t *s   = GC_ALLOC_INIT(swatch_color_t, {0});
@@ -163,11 +142,32 @@ project_t *import_arm_from_map_to_arm(any_map_t *old) {
 		project->material_groups = import_arm_get_node_canvas_array(old, "material_groups");
 	}
 	project->material_icons = any_map_get(old, "material_icons");
-	project->font_assets    = any_map_get(old, "font_assets");
 
-	any_array_t *lds        = any_map_get(old, "layer_datas");
+	any_array_t *mds = any_map_get(old, "material_datas");
+	if (mds != NULL) {
+		project->material_datas = any_array_create_from_raw((void *[]){}, 0);
+		for (i32 i = 0; i < mds->length; ++i) {
+			any_map_t        *old = mds->buffer[i];
+			material_data2_t *md  = GC_ALLOC_INIT(layer_data_t, {0});
+			md->paint_base        = armpack_map_get_i32(old, "paint_base") > 0;
+			md->paint_opac        = armpack_map_get_i32(old, "paint_opac") > 0;
+			md->paint_occ         = armpack_map_get_i32(old, "paint_occ") > 0;
+			md->paint_rough       = armpack_map_get_i32(old, "paint_rough") > 0;
+			md->paint_met         = armpack_map_get_i32(old, "paint_met") > 0;
+			md->paint_nor         = armpack_map_get_i32(old, "paint_nor") > 0;
+			md->paint_height      = armpack_map_get_i32(old, "paint_height") > 0;
+			md->paint_emis        = armpack_map_get_i32(old, "paint_emis") > 0;
+			md->paint_subs        = armpack_map_get_i32(old, "paint_subs") > 0;
+			md->opac_mode         = armpack_map_get_i32(old, "opac_mode");
+			any_array_push(project->material_datas, md);
+		}
+	}
+
+	project->font_assets = any_map_get(old, "font_assets");
+
+	any_array_t *lds = any_map_get(old, "layer_datas");
 	if (lds != NULL) {
-		project->layer_datas    = any_array_create_from_raw((void *[]){}, 0);
+		project->layer_datas = any_array_create_from_raw((void *[]){}, 0);
 		for (i32 i = 0; i < lds->length; ++i) {
 			any_map_t    *old      = lds->buffer[i];
 			layer_data_t *ld       = GC_ALLOC_INIT(layer_data_t, {0});
@@ -180,7 +180,7 @@ project_t *import_arm_from_map_to_arm(any_map_t *old) {
 			ld->uv_type            = armpack_map_get_i32(old, "uv_type");
 			ld->decal_mat          = any_map_get(old, "decal_mat");
 			ld->opacity_mask       = armpack_map_get_f32(old, "opacity_mask");
-			ld->fill_layer         = armpack_map_get_i32(old, "fill_layer");
+			ld->fill_material      = armpack_map_get_i32(old, "fill_material");
 			ld->object_mask        = armpack_map_get_i32(old, "object_mask");
 			ld->blending           = armpack_map_get_i32(old, "blending");
 			ld->parent             = armpack_map_get_i32(old, "parent");
@@ -203,7 +203,7 @@ project_t *import_arm_from_map_to_arm(any_map_t *old) {
 		}
 	}
 
-	any_array_t *ms     = any_map_get(old, "mesh_datas");
+	any_array_t *ms = any_map_get(old, "mesh_datas");
 	if (ms != NULL) {
 		project->mesh_datas = any_array_create_from_raw((void *[]){}, 0);
 		for (i32 i = 0; i < ms->length; ++i) {
@@ -227,23 +227,71 @@ project_t *import_arm_from_map_to_arm(any_map_t *old) {
 		}
 	}
 
-	project->mesh_assets   = any_map_get(old, "mesh_assets");
-	project->mesh_icons    = any_map_get(old, "mesh_icons");
-	project->atlas_objects = any_map_get(old, "atlas_objects");
-	project->atlas_names   = any_map_get(old, "atlas_names");
+	project->mesh_assets     = any_map_get(old, "mesh_assets");
+	project->mesh_icons      = any_map_get(old, "mesh_icons");
+	project->mesh_transforms = any_map_get(old, "mesh_transforms");
+	project->atlas_objects   = any_map_get(old, "atlas_objects");
+	project->atlas_names     = any_map_get(old, "atlas_names");
 
 	return project;
+}
+
+project_t *import_arm_from_version_6(any_map_t *old) {
+	any_array_t *lds = any_map_get(old, "layer_datas");
+	if (lds != NULL) {
+		for (i32 i = 0; i < lds->length; ++i) {
+			any_map_t *ld = lds->buffer[i];
+			armpack_map_set_i32(ld, "fill_material", armpack_map_get_i32(ld, "fill_layer"));
+			any_map_set(ld, "path_points", NULL);
+			any_map_set(ld, "path_points_world", NULL);
+			any_map_set(ld, "path_points_camera", NULL);
+			any_map_set(ld, "path_points_parent", NULL);
+			armpack_map_set_i32(ld, "path_tool", 0);
+			armpack_map_set_i32(ld, "path_curved", 0);
+			armpack_map_set_i32(ld, "path_material", -1);
+		}
+	}
+
+	any_array_t *mds = any_array_create_from_raw((void *[]){}, 0);
+	any_array_t *mns = any_map_get(old, "material_nodes");
+	for (i32 i = 0; i < mns->length; ++i) {
+		any_map_t *m = any_map_create();
+		armpack_map_set_i32(m, "paint_base", 1);
+		armpack_map_set_i32(m, "paint_opac", 1);
+		armpack_map_set_i32(m, "paint_occ", 1);
+		armpack_map_set_i32(m, "paint_rough", 1);
+		armpack_map_set_i32(m, "paint_met", 1);
+		armpack_map_set_i32(m, "paint_nor", 1);
+		armpack_map_set_i32(m, "paint_height", 1);
+		armpack_map_set_i32(m, "paint_emis", 1);
+		armpack_map_set_i32(m, "paint_subs", 1);
+		armpack_map_set_i32(m, "opac_mode", 0);
+		any_array_push(mds, m);
+	}
+	any_map_set(old, "material_datas", mds);
+
+	return import_arm_from_map_to_arm(old);
+}
+
+project_t *import_arm_from_version_5(any_map_t *old) {
+	any_array_t *mds = any_map_get(old, "mesh_datas");
+	any_array_t *mts = any_array_create_from_raw((void *[]){}, 0);
+	for (i32 i = 0; i < mds->length; ++i) {
+		any_array_push(mts, mat4_to_f32_array(mat4_identity()));
+	}
+	any_map_set(old, "mesh_transforms", mts);
+	return import_arm_from_version_6(old);
 }
 
 project_t *import_arm_from_version_4(any_map_t *old) {
 	f32_array_t *camera_world = any_map_get(old, "camera_world");
 	if (camera_world != NULL) {
-		mat4_t       m            = mat4_from_f32_array(camera_world, 0);
-		m                         = mat4_transpose(m);
-		camera_world              = mat4_to_f32_array(m);
+		mat4_t m     = mat4_from_f32_array(camera_world, 0);
+		m            = mat4_transpose(m);
+		camera_world = mat4_to_f32_array(m);
 		any_map_set(old, "camera_world", camera_world);
 	}
-	return import_arm_from_map_to_arm(old);
+	return import_arm_from_version_5(old);
 }
 
 project_t *import_arm_from_version_3(any_map_t *old) {
@@ -265,13 +313,19 @@ project_t *import_arm_from_version_2(any_map_t *old) {
 
 project_t *import_arm_from_old(buffer_t *b) {
 	any_map_t *old = armpack_decode_to_map(b);
-	if (import_arm_is_version_4(b)) {
+	if (import_arm_is_version(b, '6')) {
+		return import_arm_from_version_6(old);
+	}
+	if (import_arm_is_version(b, '5')) {
+		return import_arm_from_version_5(old);
+	}
+	if (import_arm_is_version(b, '4')) {
 		return import_arm_from_version_4(old);
 	}
-	if (import_arm_is_version_3(b)) {
+	if (import_arm_is_version(b, '3')) {
 		return import_arm_from_version_3(old);
 	}
-	if (import_arm_is_version_2(b)) {
+	if (import_arm_is_version(b, '2')) {
 		return import_arm_from_version_2(old);
 	}
 	return NULL;
