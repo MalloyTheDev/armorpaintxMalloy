@@ -89,6 +89,10 @@ slot_layer_t *slot_layer_create(char *ext, layer_slot_type_t type, slot_layer_t 
 		}
 
 		raw->texpaint_preview = gpu_create_render_target(util_render_layer_preview_size, util_render_layer_preview_size, GPU_TEXTURE_FORMAT_RGBA32);
+
+		if (slot_layer_is_filter(raw)) {
+			raw->name = string("Filter %d", id);
+		}
 	}
 
 	else { // Mask
@@ -245,7 +249,7 @@ void slot_layer_invert_mask(slot_layer_t *raw) {
 	gpu_texture_t *_texpaint = raw->texpaint;
 	gpu_delete_texture(_texpaint);
 	render_target_t *rt = any_map_get(render_path_render_targets, string("texpaint%d", raw->id));
-	raw->texpaint = rt->_image       = inverted;
+	raw->texpaint = rt->_image     = inverted;
 	g_context->layer_preview_dirty = true;
 	g_context->ddirty              = 3;
 }
@@ -276,7 +280,7 @@ void layers_apply_mask(slot_layer_t *l, slot_layer_t *m) {
 }
 
 void slot_layer_apply_mask(slot_layer_t *raw) {
-	if (raw->parent->fill_layer != NULL) {
+	if (raw->parent->fill_material != NULL) {
 		slot_layer_to_paint_layer(raw->parent);
 	}
 	if (slot_layer_is_group(raw->parent)) {
@@ -342,7 +346,7 @@ slot_layer_t *slot_layer_duplicate(slot_layer_t *raw) {
 
 	l->visible            = raw->visible;
 	l->mask_opacity       = raw->mask_opacity;
-	l->fill_layer         = raw->fill_layer;
+	l->fill_material      = raw->fill_material;
 	l->object_mask        = raw->object_mask;
 	l->blending           = raw->blending;
 	l->uv_type            = raw->uv_type;
@@ -443,22 +447,27 @@ void slot_layer_resize_and_set_bits(slot_layer_t *raw) {
 
 void slot_layer_to_fill_layer_on_next_frame(void *_) {
 	make_material_parse_paint_material(true);
-	g_context->layer_preview_dirty                  = true;
+	g_context->layer_preview_dirty                    = true;
 	ui_base_hwnds->buffer[TAB_AREA_SIDEBAR0]->redraws = 2;
 }
 
 void slot_layer_to_fill_layer(slot_layer_t *raw) {
 	context_set_layer(raw);
-	raw->fill_layer = g_context->material;
+	raw->fill_material = g_context->material;
 	layers_update_fill_layer(true);
 	sys_notify_on_next_frame(&slot_layer_to_fill_layer_on_next_frame, NULL);
 }
 
 void slot_layer_to_paint_layer(slot_layer_t *raw) {
 	context_set_layer(raw);
-	raw->fill_layer = NULL;
+	raw->fill_material = NULL;
+	if (raw->path_material != NULL) {
+		raw->path_material = NULL;
+		raw->path_points   = NULL;
+		util_layer_update_path();
+	}
 	make_material_parse_paint_material(true);
-	g_context->layer_preview_dirty                  = true;
+	g_context->layer_preview_dirty                    = true;
 	ui_base_hwnds->buffer[TAB_AREA_SIDEBAR0]->redraws = 2;
 }
 
@@ -554,6 +563,39 @@ bool slot_layer_has_masks(slot_layer_t *raw, bool include_group_masks) {
 	return false;
 }
 
+slot_layer_t_array_t *slot_layer_get_filters(slot_layer_t *raw, bool include_group_filters) {
+	if (slot_layer_is_filter(raw)) {
+		return NULL;
+	}
+
+	slot_layer_t_array_t *children = NULL;
+	// Child filters of a layer
+	for (i32 i = 0; i < project_layers->length; ++i) {
+		slot_layer_t *l = project_layers->buffer[i];
+		if (l->parent == raw && slot_layer_is_filter(l)) {
+			if (children == NULL) {
+				children = any_array_create_from_raw((void *[]){}, 0);
+			}
+			any_array_push(children, l);
+		}
+	}
+	// Child filters of a parent group
+	if (include_group_filters) {
+		if (raw->parent != NULL && slot_layer_is_group(raw->parent)) {
+			for (i32 i = 0; i < project_layers->length; ++i) {
+				slot_layer_t *l = project_layers->buffer[i];
+				if (l->parent == raw->parent && slot_layer_is_filter(l)) {
+					if (children == NULL) {
+						children = any_array_create_from_raw((void *[]){}, 0);
+					}
+					any_array_push(children, l);
+				}
+			}
+		}
+	}
+	return children;
+}
+
 f32 slot_layer_get_opacity(slot_layer_t *raw) {
 	f32 f = raw->mask_opacity;
 	if (slot_layer_is_layer(raw) && raw->parent != NULL) {
@@ -568,6 +610,10 @@ i32 slot_layer_get_object_mask(slot_layer_t *raw) {
 
 bool slot_layer_is_layer(slot_layer_t *raw) {
 	return raw->texpaint != NULL && raw->texpaint_nor != NULL;
+}
+
+bool slot_layer_is_path(slot_layer_t *raw) {
+	return raw->path_points != NULL;
 }
 
 bool slot_layer_is_group(slot_layer_t *raw) {
@@ -586,16 +632,20 @@ slot_layer_t *slot_layer_get_containing_group(slot_layer_t *raw) {
 	}
 }
 
+bool slot_layer_is_filter(slot_layer_t *raw) {
+	return raw->texpaint != NULL && raw->texpaint_nor != NULL && raw->parent != NULL && slot_layer_is_layer(raw->parent);
+}
+
 bool slot_layer_is_mask(slot_layer_t *raw) {
 	return raw->texpaint != NULL && raw->texpaint_nor == NULL;
 }
 
 bool slot_layer_is_group_mask(slot_layer_t *raw) {
-	return raw->texpaint != NULL && raw->texpaint_nor == NULL && slot_layer_is_group(raw->parent);
+	return slot_layer_is_mask(raw) && slot_layer_is_group(raw->parent);
 }
 
 bool slot_layer_is_layer_mask(slot_layer_t *raw) {
-	return raw->texpaint != NULL && raw->texpaint_nor == NULL && slot_layer_is_layer(raw->parent);
+	return slot_layer_is_mask(raw) && slot_layer_is_layer(raw->parent);
 }
 
 bool slot_layer_is_in_group(slot_layer_t *raw) {
@@ -640,13 +690,36 @@ bool slot_layer_can_move(slot_layer_t *raw, i32 to) {
 		}
 	}
 
-	if (slot_layer_is_layer(raw)) {
+	if (slot_layer_is_filter(raw)) {
+		// Filters can not be on top
+		if (new_upper_layer == NULL) {
+			return false;
+		}
+		// Filters should not be placed below a collapsed group
+		if (slot_layer_is_in_group(new_upper_layer) && !slot_layer_get_containing_group(new_upper_layer)->show_panel) {
+			return false;
+		}
+		// Filters should not be placed below a collapsed layer
+		if ((slot_layer_is_filter(new_upper_layer) || slot_layer_is_mask(new_upper_layer)) && !new_upper_layer->parent->show_panel) {
+			return false;
+		}
+	}
+
+	if (slot_layer_is_layer(raw) && !slot_layer_is_filter(raw)) {
 		// Layers can not be moved directly below its own mask(s)
 		if (new_upper_layer != NULL && slot_layer_is_mask(new_upper_layer) && new_upper_layer->parent == raw) {
 			return false;
 		}
+		// Layers can not be moved directly below its own filter(s)
+		if (new_upper_layer != NULL && slot_layer_is_filter(new_upper_layer) && new_upper_layer->parent == raw) {
+			return false;
+		}
 		// Layers can not be placed above a mask as the mask would be reparented
 		if (new_lower_layer != NULL && slot_layer_is_mask(new_lower_layer)) {
+			return false;
+		}
+		// Layers can not be placed above a filter as the filter would be reparented
+		if (new_lower_layer != NULL && slot_layer_is_filter(new_lower_layer)) {
 			return false;
 		}
 	}
@@ -706,7 +779,16 @@ void slot_layer_move(slot_layer_t *raw, i32 to) {
 	array_remove(project_layers, raw);
 	array_insert(project_layers, to, raw);
 
-	if (slot_layer_is_layer(raw)) {
+	if (slot_layer_is_filter(raw)) {
+		// Precondition new_upper_layer != NULL, ensured in can_move
+		if (slot_layer_is_filter(new_upper_layer) || slot_layer_is_mask(new_upper_layer)) {
+			raw->parent = new_upper_layer->parent;
+		}
+		else if (slot_layer_is_layer(new_upper_layer) || slot_layer_is_group(new_upper_layer)) {
+			raw->parent = new_upper_layer;
+		}
+	}
+	else if (slot_layer_is_layer(raw)) {
 		slot_layer_t *old_parent = raw->parent;
 
 		if (new_upper_layer == NULL) {
@@ -714,6 +796,9 @@ void slot_layer_move(slot_layer_t *raw, i32 to) {
 		}
 		else if (slot_layer_is_in_group(new_upper_layer) && !slot_layer_get_containing_group(new_upper_layer)->show_panel) {
 			raw->parent = NULL; // Placed below a collapsed group
+		}
+		else if (slot_layer_is_filter(new_upper_layer)) {
+			raw->parent = new_upper_layer->parent->parent; // Placed below a filter, use the same level as the filter's parent
 		}
 		else if (slot_layer_is_layer(new_upper_layer)) {
 			raw->parent = new_upper_layer->parent; // Placed below a layer, use the same parent
@@ -740,6 +825,18 @@ void slot_layer_move(slot_layer_t *raw, i32 to) {
 			}
 		}
 
+		// Layers can have filters as children
+		// These have to be moved, too
+		slot_layer_t_array_t *layer_filters = slot_layer_get_filters(raw, false);
+		if (layer_filters != NULL) {
+			i32 masks_count = layer_masks != NULL ? layer_masks->length : 0;
+			for (i32 idx = 0; idx < layer_filters->length; ++idx) {
+				slot_layer_t *filter = layer_filters->buffer[idx];
+				array_remove(project_layers, filter);
+				array_insert(project_layers, delta > 0 ? old_index + delta - 1 : old_index + delta + masks_count + idx, filter);
+			}
+		}
+
 		// The layer is the last layer in the group, remove it
 		// Notice that this might remove group masks
 		if (old_parent != NULL && slot_layer_get_children(old_parent) == NULL) {
@@ -748,11 +845,11 @@ void slot_layer_move(slot_layer_t *raw, i32 to) {
 	}
 	else if (slot_layer_is_mask(raw)) {
 		// Precondition new_upper_layer != NULL, ensured in can_move
-		if (slot_layer_is_layer(new_upper_layer) || slot_layer_is_group(new_upper_layer)) {
-			raw->parent = new_upper_layer;
-		}
-		else if (slot_layer_is_mask(new_upper_layer)) { // Group mask or layer mask
+		if (slot_layer_is_filter(new_upper_layer) || slot_layer_is_mask(new_upper_layer)) {
 			raw->parent = new_upper_layer->parent;
+		}
+		else if (slot_layer_is_layer(new_upper_layer) || slot_layer_is_group(new_upper_layer)) {
+			raw->parent = new_upper_layer;
 		}
 	}
 	else if (slot_layer_is_group(raw)) {
@@ -827,7 +924,7 @@ void layers_resize() {
 		slot_layer_resize_and_set_bits(render_path_paint_live_layer);
 	}
 	render_path_raytrace_ready = false; // Rebuild baketex
-	g_context->ddirty        = 2;
+	g_context->ddirty          = 2;
 }
 
 void layers_set_bits() {
@@ -966,7 +1063,7 @@ bool layers_is_fill_material() {
 	slot_material_t *m = g_context->material;
 	for (i32 i = 0; i < project_layers->length; ++i) {
 		slot_layer_t *l = project_layers->buffer[i];
-		if (l->fill_layer == m) {
+		if (l->fill_material == m) {
 			return true;
 		}
 	}
@@ -1017,13 +1114,13 @@ void layers_update_fill_layers() {
 	bool has_fill_mask  = false;
 	for (i32 i = 0; i < project_layers->length; ++i) {
 		slot_layer_t *l = project_layers->buffer[i];
-		if (slot_layer_is_layer(l) && l->fill_layer == g_context->material) {
+		if (slot_layer_is_layer(l) && l->fill_material == g_context->material) {
 			has_fill_layer = true;
 		}
 	}
 	for (i32 i = 0; i < project_layers->length; ++i) {
 		slot_layer_t *l = project_layers->buffer[i];
-		if (slot_layer_is_mask(l) && l->fill_layer == g_context->material) {
+		if (slot_layer_is_mask(l) && l->fill_material == g_context->material) {
 			has_fill_mask = true;
 		}
 	}
@@ -1041,16 +1138,27 @@ void layers_update_fill_layers() {
 			bool first = true;
 			for (i32 i = 0; i < project_layers->length; ++i) {
 				slot_layer_t *l = project_layers->buffer[i];
-				if (slot_layer_is_layer(l) && l->fill_layer == g_context->material) {
+				if (slot_layer_is_layer(l) && l->fill_material == g_context->material) {
 					g_context->layer = l;
 					if (first) {
 						first = false;
 						make_material_parse_paint_material(false);
 					}
 					layers_set_object_mask();
-					slot_layer_clear(l, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
-					render_path_paint_commands_paint(false);
-					render_path_paint_dilate(true, true);
+					if (l->texpaint_sculpt != NULL) {
+						i32 tid = l->id;
+						i32 hid = history_undo_i - 1 < 0 ? g_config->undo_steps - 1 : history_undo_i - 1;
+						sculpt_import_mesh_pack_to_texture(g_context->paint_object->data, l);
+						render_path_set_target(string("texpaint_sculpt_undo%d", hid), NULL, NULL, GPU_CLEAR_NONE, 0, 0.0);
+						render_path_bind_target(string("texpaint_sculpt%d", tid), "tex");
+						render_path_draw_shader("Scene/copy_pass/copyRGBA128_pass");
+						render_path_sculpt_commands();
+					}
+					else {
+						slot_layer_clear(l, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
+						render_path_paint_commands_paint(false);
+						render_path_paint_dilate(true, true);
+					}
 				}
 			}
 		}
@@ -1058,7 +1166,7 @@ void layers_update_fill_layers() {
 			bool first = true;
 			for (i32 i = 0; i < project_layers->length; ++i) {
 				slot_layer_t *l = project_layers->buffer[i];
-				if (slot_layer_is_mask(l) && l->fill_layer == g_context->material) {
+				if (slot_layer_is_mask(l) && l->fill_material == g_context->material) {
 					g_context->layer = l;
 					if (first) {
 						first = false;
@@ -1085,31 +1193,90 @@ void layers_update_fill_layers() {
 	}
 }
 
+bool layers_is_path_material() {
+	slot_material_t *m = g_context->material;
+	for (i32 i = 0; i < project_layers->length; ++i) {
+		slot_layer_t *l = project_layers->buffer[i];
+		if (slot_layer_is_path(l) && l->path_material == m) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void layers_update_path_layers() {
+	for (i32 i = 0; i < project_layers->length; ++i) {
+		slot_layer_t *l = project_layers->buffer[i];
+		if (slot_layer_is_path(l) && l->path_material == g_context->material) {
+			util_layer_repaint_path(l);
+		}
+	}
+}
+
 void layers_update_fill_layer(bool parse_paint) {
 	gpu_texture_t *current = _draw_current;
 	bool           in_use  = gpu_in_use;
 	if (in_use)
 		draw_end();
 
-	tool_type_t _tool                = g_context->tool;
-	i32         _fill_type           = g_context->fill_type_handle->i;
+	tool_type_t _tool              = g_context->tool;
+	i32         _fill_type         = g_context->fill_type_handle->i;
 	g_context->tool                = TOOL_TYPE_FILL;
 	g_context->fill_type_handle->i = FILL_TYPE_OBJECT;
 	g_context->pdirty              = 1;
 
-	slot_layer_clear(g_context->layer, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
-
-	if (parse_paint) {
-		make_material_parse_paint_material(false);
+	if (g_context->layer->texpaint_sculpt != NULL) {
+		i32 tid = g_context->layer->id;
+		i32 hid = history_undo_i - 1 < 0 ? g_config->undo_steps - 1 : history_undo_i - 1;
+		sculpt_import_mesh_pack_to_texture(g_context->paint_object->data, g_context->layer);
+		render_path_set_target(string("texpaint_sculpt_undo%d", hid), NULL, NULL, GPU_CLEAR_NONE, 0, 0.0);
+		render_path_bind_target(string("texpaint_sculpt%d", tid), "tex");
+		render_path_draw_shader("Scene/copy_pass/copyRGBA128_pass");
+		if (parse_paint) {
+			make_material_parse_paint_material(false);
+		}
+		render_path_sculpt_commands();
 	}
-	render_path_paint_commands_paint(false);
-	render_path_paint_dilate(true, true);
+	else {
+		slot_layer_clear(g_context->layer, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
+		if (parse_paint) {
+			make_material_parse_paint_material(false);
+		}
+		render_path_paint_commands_paint(false);
+		render_path_paint_dilate(true, true);
+	}
 
 	g_context->rdirty              = 2;
 	g_context->tool                = _tool;
 	g_context->fill_type_handle->i = _fill_type;
 	if (in_use)
 		draw_begin(current, false, 0);
+}
+
+void layers_update_linked_layers() {
+	slot_material_t *_material  = g_context->material;
+	bool             any_linked = false;
+	for (i32 i = 0; i < project_materials->length; ++i) {
+		slot_material_t *m          = project_materials->buffer[i];
+		bool             has_linked = false;
+		for (i32 j = 0; j < m->canvas->nodes->length; ++j) {
+			ui_node_t *node = m->canvas->nodes->buffer[j];
+			if (string_equals(node->type, "LAYER") || string_equals(node->type, "LAYER_MASK")) {
+				has_linked = true;
+				break;
+			}
+		}
+		if (!has_linked) {
+			continue;
+		}
+		any_linked          = true;
+		g_context->material = m;
+		layers_update_fill_layers();
+	}
+	g_context->material = _material;
+	if (any_linked) {
+		make_material_parse_paint_material(false);
+	}
 }
 
 void layers_set_object_mask() {
@@ -1159,16 +1326,20 @@ void layers_new_layer_clear(slot_layer_t *l) {
 	slot_layer_clear(l, 0x00000000, NULL, 1.0, layers_default_rough, 0.0);
 }
 
-slot_layer_t *layers_new_layer(bool clear, i32 position) {
+slot_layer_t *layers_new_layer(bool clear, i32 position, slot_layer_t *parent) {
 	if (project_layers->length > layers_max_layers) {
 		return NULL;
 	}
 
-	slot_layer_t *l = slot_layer_create("", LAYER_SLOT_TYPE_LAYER, NULL);
+	slot_layer_t *l = slot_layer_create("", LAYER_SLOT_TYPE_LAYER, parent);
 	l->object_mask  = g_context->layer_filter;
 
+	if (position == -1 && slot_layer_is_filter(l)) {
+		position = array_index_of(project_layers, parent);
+	}
+
 	if (position == -1) {
-		if (slot_layer_is_mask(g_context->layer))
+		if (slot_layer_is_mask(g_context->layer) || slot_layer_is_filter(g_context->layer))
 			context_set_layer(g_context->layer->parent);
 		array_insert(project_layers, array_index_of(project_layers, g_context->layer) + 1, l);
 	}
@@ -1177,13 +1348,17 @@ slot_layer_t *layers_new_layer(bool clear, i32 position) {
 	}
 
 	context_set_layer(l);
-	i32 li = array_index_of(project_layers, g_context->layer);
-	if (li > 0) {
-		slot_layer_t *below = project_layers->buffer[li - 1];
-		if (slot_layer_is_layer(below)) {
-			g_context->layer->parent = below->parent;
+
+	if (parent == NULL) {
+		i32 li = array_index_of(project_layers, g_context->layer);
+		if (li > 0) {
+			slot_layer_t *below = project_layers->buffer[li - 1];
+			if (slot_layer_is_layer(below)) {
+				g_context->layer->parent = below->parent;
+			}
 		}
 	}
+
 	if (clear) {
 		sys_notify_on_next_frame(&layers_new_layer_clear, l);
 	}
@@ -1224,27 +1399,104 @@ slot_layer_t *layers_new_group() {
 	return l;
 }
 
+slot_layer_t *layers_new_path_layer(bool curved) {
+	slot_layer_t *l = layers_new_layer(true, -1, NULL);
+	if (l == NULL) {
+		return NULL;
+	}
+	l->path_points        = f32_array_create(0);
+	l->path_points_world  = f32_array_create(0);
+	l->path_points_camera = f32_array_create(0);
+	l->path_points_parent = i32_array_create(0);
+	l->path_tool          = -1;
+	l->path_curved        = curved;
+	l->path_material      = g_context->material;
+	l->name               = string(curved ? "Curve %d" : "Path %d", l->id + 1);
+	return l;
+}
+
 void layers_create_fill_layer_on_next_frame(void *_) {
-	slot_layer_t *l = layers_new_layer(false, _layers_position);
+	slot_layer_t *l = layers_new_layer(false, _layers_position, NULL);
 	history_new_layer();
 	l->uv_type = _layers_uv_type;
 	if (!mat4_isnan(_layers_decal_mat)) {
 		l->decal_mat = _layers_decal_mat;
 	}
 	l->object_mask = g_context->layer_filter;
+
+	if (g_config->workflow == WORKFLOW_SCULPT) {
+		mesh_data_t *md = g_context->paint_object->data;
+		sculpt_init();
+		sculpt_init_sculpt_texture(l, md);
+	}
+
 	history_to_fill_layer();
 	slot_layer_to_fill_layer(l);
 }
 
 void layers_create_fill_layer(uv_type_t uv_type, mat4_t decal_mat, i32 position) {
-	if (g_context->tool == TOOL_TYPE_GIZMO) {
-		return;
-	}
+	// if (g_context->tool == TOOL_TYPE_CURSOR) {
+	// 	return;
+	// }
 
 	_layers_uv_type   = uv_type;
 	_layers_decal_mat = decal_mat;
 	_layers_position  = position;
 	sys_notify_on_next_frame(&layers_create_fill_layer_on_next_frame, NULL);
+}
+
+void tab_materials_button_new_on_next_frame(void *_);
+
+void layers_create_filter_on_next_frame(void *_) {
+	if (slot_layer_get_filters(g_context->layer, true) != NULL) {
+		return;
+	}
+
+	tab_materials_button_new_on_next_frame(NULL);
+
+	slot_layer_t *l = layers_new_layer(false, -1, g_context->layer);
+	history_new_layer();
+	history_to_fill_layer();
+	slot_layer_to_fill_layer(l);
+
+	// Filter material
+	g_context->material->canvas->name = string_copy(g_context->layer->name);
+
+	ui_nodes_t       *nodes  = g_context->material->nodes;
+	ui_node_canvas_t *canvas = g_context->material->canvas;
+	ui_node_t        *nout   = NULL;
+	for (i32 i = 0; i < canvas->nodes->length; ++i) {
+		ui_node_t *n = canvas->nodes->buffer[i];
+		if (string_equals(n->type, "OUTPUT_MATERIAL_PBR")) {
+			nout = n;
+			break;
+		}
+	}
+	for (i32 i = 0; i < canvas->nodes->length; ++i) {
+		ui_node_t *n = canvas->nodes->buffer[i];
+		if (string_equals(n->name, "Color")) {
+			ui_remove_node(n, canvas);
+			break;
+		}
+	}
+
+	ui_node_t *n                         = nodes_material_create_node("LAYER", NULL);
+	n->buttons->buffer[0]->default_value = f32_array_create_x(array_index_of(project_layers, l->parent));
+	n->x                                 = -50;
+	n->y                                 = 100;
+
+	for (int i = 0; i < 9; ++i) {
+		ui_node_link_t *l =
+		    GC_ALLOC_INIT(ui_node_link_t, {.id = ui_next_link_id(canvas->links), .from_id = n->id, .from_socket = i, .to_id = nout->id, .to_socket = i});
+		any_array_push(canvas->links, l);
+	}
+
+	layers_update_fill_layer(true);
+	util_render_make_material_preview();
+}
+
+void layers_create_filter() {
+	sys_notify_on_next_frame(&layers_create_filter_on_next_frame, NULL);
 }
 
 void layers_create_image_mask(asset_t *asset) {
@@ -1261,13 +1513,13 @@ void layers_create_image_mask(asset_t *asset) {
 
 void layers_create_image_layer(asset_t *asset) {
 	history_new_layer();
-	slot_layer_t *m = layers_new_layer(false, -1);
+	slot_layer_t *m = layers_new_layer(false, -1, NULL);
 	slot_layer_clear(m, 0x00000000, project_get_image(asset), 1.0, layers_default_rough, 0.0);
 	g_context->layer_preview_dirty = true;
 }
 
 void layers_create_color_layer_on_next_frame(void *_) {
-	slot_layer_t *l = layers_new_layer(false, _layers_position);
+	slot_layer_t *l = layers_new_layer(false, _layers_position, NULL);
 	history_new_layer();
 	l->uv_type     = UV_TYPE_UVMAP;
 	l->object_mask = g_context->layer_filter;
@@ -1405,7 +1657,7 @@ slot_layer_t *layers_merge_group(slot_layer_t *l) {
 
 	children->buffer[0]->parent = NULL;
 	children->buffer[0]->name   = l->name;
-	if (children->buffer[0]->fill_layer != NULL) {
+	if (children->buffer[0]->fill_material != NULL) {
 		slot_layer_to_paint_layer(children->buffer[0]);
 	}
 	slot_layer_delete(l);
@@ -1544,6 +1796,9 @@ slot_layer_t *layers_flatten(bool height_to_normal, slot_layer_t_array_t *layers
 		if (!slot_layer_is_layer(l1)) {
 			continue;
 		}
+		if (slot_layer_get_filters(l1, false) != NULL) {
+			continue;
+		}
 
 		gpu_texture_t        *mask    = empty;
 		slot_layer_t_array_t *l1masks = slot_layer_get_masks(l1, true);
@@ -1570,29 +1825,29 @@ slot_layer_t *layers_flatten(bool height_to_normal, slot_layer_t_array_t *layers
 			draw_set_pipeline(NULL);
 			draw_end();
 
-			if (g_context->tool == TOOL_TYPE_GIZMO) {
-				// Do not multiply basecol by alpha
-				draw_begin(layers_expa, false, 0); // Copy to temp
-				draw_set_pipeline(pipes_copy);
-				draw_image(l1->texpaint, 0, 0);
-				draw_set_pipeline(NULL);
-				draw_end();
-			}
-			else {
-				_gpu_begin(layers_expa, NULL, NULL, GPU_CLEAR_NONE, 0, 0.0);
-				gpu_set_pipeline(pipes_merge);
-				gpu_set_texture(pipes_tex0, l1->texpaint);
-				gpu_set_texture(pipes_tex1, empty);
-				gpu_set_texture(pipes_texmask, mask);
-				gpu_set_texture(pipes_texa, layers_temp_image);
-				gpu_set_float(pipes_opac, slot_layer_get_opacity(l1));
-				gpu_set_float(pipes_tex1w, empty->width);
-				gpu_set_int(pipes_blending, layers->length > 1 ? l1->blending : 0);
-				gpu_set_vertex_buffer(const_data_screen_aligned_vb);
-				gpu_set_index_buffer(const_data_screen_aligned_ib);
-				gpu_draw();
-				gpu_end();
-			}
+			// if (g_context->tool == TOOL_TYPE_CURSOR) {
+			// 	// Do not multiply basecol by alpha
+			// 	draw_begin(layers_expa, false, 0); // Copy to temp
+			// 	draw_set_pipeline(pipes_copy);
+			// 	draw_image(l1->texpaint, 0, 0);
+			// 	draw_set_pipeline(NULL);
+			// 	draw_end();
+			// }
+			// else {
+			_gpu_begin(layers_expa, NULL, NULL, GPU_CLEAR_NONE, 0, 0.0);
+			gpu_set_pipeline(pipes_merge);
+			gpu_set_texture(pipes_tex0, l1->texpaint);
+			gpu_set_texture(pipes_tex1, empty);
+			gpu_set_texture(pipes_texmask, mask);
+			gpu_set_texture(pipes_texa, layers_temp_image);
+			gpu_set_float(pipes_opac, slot_layer_get_opacity(l1));
+			gpu_set_float(pipes_tex1w, empty->width);
+			gpu_set_int(pipes_blending, layers->length > 1 ? l1->blending : 0);
+			gpu_set_vertex_buffer(const_data_screen_aligned_vb);
+			gpu_set_index_buffer(const_data_screen_aligned_ib);
+			gpu_draw();
+			gpu_end();
+			// }
 		}
 
 		if (l1->paint_nor) {
@@ -1677,9 +1932,9 @@ void layers_on_resized_on_next_frame(void *_) {
 	slot_material_t *_material = g_context->material;
 	for (i32 i = 0; i < project_layers->length; ++i) {
 		slot_layer_t *l = project_layers->buffer[i];
-		if (l->fill_layer != NULL) {
+		if (l->fill_material != NULL) {
 			g_context->layer    = l;
-			g_context->material = l->fill_layer;
+			g_context->material = l->fill_material;
 			layers_update_fill_layer(true);
 		}
 	}

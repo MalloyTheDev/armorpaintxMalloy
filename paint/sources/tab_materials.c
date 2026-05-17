@@ -2,6 +2,7 @@
 #include "global.h"
 
 i32 _tab_materials_draw_slots;
+i32 tab_materials_drag_pos = -1;
 
 void tab_materials_button_nodes() {
 	if (ui_button(tr("Nodes"), UI_ALIGN_CENTER, "")) {
@@ -59,8 +60,8 @@ void tab_materials_delete_material(slot_material_t *m) {
 	i32 i = array_index_of(project_materials, m);
 	for (i32 i = 0; i < project_layers->length; ++i) {
 		slot_layer_t *l = project_layers->buffer[i];
-		if (l->fill_layer == m) {
-			l->fill_layer = NULL;
+		if (l->fill_material == m) {
+			l->fill_material = NULL;
 		}
 	}
 	history_delete_material();
@@ -96,7 +97,7 @@ void tab_materials_draw_slots_menu() {
 		box_export_show_bake_material();
 	}
 
-	if (ui_menu_button(tr("Duplicate"), "", ICON_DUPLICATE)) {
+	if (ui_menu_button(tr("Duplicate"), "ctrl+d", ICON_DUPLICATE)) {
 		sys_notify_on_next_frame(&tab_materials_draw_slots_duplicate, NULL);
 	}
 
@@ -161,11 +162,11 @@ void tab_materials_draw_slots_menu() {
 	ui_handle_t *opac_mode_handle   = ui_handle(__ID__);
 	opac_mode_handle->i             = m->paint_opac_mode;
 	string_array_t *opac_mode_items = any_array_create_from_raw(
-		(void *[]){
-			tr("Alpha"),
-			tr("Translucency"),
-		},
-		2);
+	    (void *[]){
+	        tr("Alpha"),
+	        tr("Translucency"),
+	    },
+	    2);
 	m->paint_opac_mode = ui_inline_radio(opac_mode_handle, opac_mode_items, UI_ALIGN_LEFT);
 
 	ui_menu_separator();
@@ -205,6 +206,11 @@ void tab_materials_draw_slots(bool mini) {
 	if (num == 0) {
 		return;
 	}
+
+	bool drag_pos_set = false;
+	f32  uix          = 0.0;
+	f32  uiy          = 0.0;
+	i32  imgw_val     = math_floor(50 * UI_SCALE());
 
 	for (i32 row = 0; row < math_floor(math_ceil(project_materials->length / (float)num)); ++row) {
 		i32          mult = g_config->show_asset_names ? 2 : 1;
@@ -250,12 +256,22 @@ void tab_materials_draw_slots(bool mini) {
 			}
 
 			// Draw material icon
-			f32        uix   = ui->_x;
-			f32        uiy   = ui->_y;
-			i32        tile  = UI_SCALE() > 1 ? 100 : 50;
-			f32        imgh  = mini ? ui_sidebar_default_w_mini * 0.85 * UI_SCALE() : 50 * UI_SCALE();
+			uix      = ui->_x;
+			uiy      = ui->_y;
+			i32 tile = UI_SCALE() > 1 ? 100 : 50;
+			f32 imgh = mini ? ui_sidebar_default_w_mini * 0.85 * UI_SCALE() : 50 * UI_SCALE();
+
+			if (base_drag_material != NULL && tab_materials_drag_pos == i) {
+				ui_fill(-1, -2, 2, imgw_val + 4, ui->ops->theme->HIGHLIGHT_COL);
+			}
+
 			ui_state_t state = project_materials->buffer[i]->preview_ready ? ui_image(img, 0xffffffff, imgh)
 			                                                               : ui_sub_image(resource_get("icons.k"), 0xffffffff, -1.0, tile, tile, tile, tile);
+
+			if (state == UI_STATE_HOVERED && base_drag_material != NULL) {
+				tab_materials_drag_pos = (mouse_x > uix + ui->_window_x + imgw_val / 2.0) ? i + 1 : i;
+				drag_pos_set           = true;
+			}
 
 			// Draw material numbers when selecting a material via keyboard shortcut
 			bool is_typing = ui->is_typing;
@@ -334,11 +350,25 @@ void tab_materials_draw_slots(bool mini) {
 		ui->_y += mini ? 0 : 6;
 	}
 
+	if (base_drag_material != NULL && tab_materials_drag_pos == project_materials->length) {
+		ui->_x = uix;
+		ui->_y = uiy;
+		ui_fill(imgw_val + 1, -2, 2, imgw_val + 4, ui->ops->theme->HIGHLIGHT_COL);
+	}
+
+	if (!drag_pos_set) {
+		tab_materials_drag_pos = -1;
+	}
+
 	bool in_focus = ui->input_x > ui->_window_x && ui->input_x < ui->_window_x + ui->_window_w && ui->input_y > ui->_window_y &&
 	                ui->input_y < ui->_window_y + ui->_window_h;
 	if (in_focus && ui->is_delete_down && project_materials->length > 1) {
 		ui->is_delete_down = false;
 		tab_materials_delete_material(g_context->material);
+	}
+	if (in_focus && ui->is_ctrl_down && ui->is_key_pressed && ui->key_code == KEY_CODE_D) {
+		_tab_materials_draw_slots = array_index_of(project_materials, g_context->material);
+		sys_notify_on_next_frame(&tab_materials_draw_slots_duplicate, NULL);
 	}
 	if (in_focus) {
 		i32 i = array_index_of(project_materials, g_context->material);
@@ -409,6 +439,19 @@ void tab_materials_draw_full(ui_handle_t *htab) {
 void tab_materials_draw(ui_handle_t *htab) {
 	bool mini = ui->_window_w <= ui_sidebar_w_mini;
 	mini ? tab_materials_draw_mini(htab) : tab_materials_draw_full(htab);
+}
+
+void tab_materials_accept_material_drop(slot_material_t *material) {
+	if (tab_materials_drag_pos == -1) {
+		return;
+	}
+
+	i32 mat_pos = array_index_of(project_materials, material);
+	if (mat_pos != -1 && math_abs(mat_pos - tab_materials_drag_pos) > 0) {
+		array_remove(project_materials, material);
+		i32 new_pos = tab_materials_drag_pos - mat_pos > 0 ? tab_materials_drag_pos - 1 : tab_materials_drag_pos;
+		array_insert(project_materials, new_pos, material);
+	}
 }
 
 void tab_materials_accept_swatch_drop(swatch_color_t *swatch) {

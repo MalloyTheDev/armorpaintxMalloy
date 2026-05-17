@@ -6,8 +6,8 @@ void keymap_load() {
 	config_keymap = keymap_get_default();
 	gc_root(config_keymap);
 	if (!string_equals(g_config->keymap, "default.json")) {
-		buffer_t         *blob       = data_get_blob(string("keymap_presets/%s", g_config->keymap));
-		any_map_t        *new_keymap = json_parse_to_map(sys_buffer_to_string(blob));
+		buffer_t       *blob       = data_get_blob(string("keymap_presets/%s", g_config->keymap));
+		any_map_t      *new_keymap = json_parse_to_map(sys_buffer_to_string(blob));
 		string_array_t *keys       = map_keys(new_keymap);
 		for (i32 i = 0; i < keys->length; ++i) {
 			char *key = keys->buffer[i];
@@ -94,12 +94,11 @@ any_map_t *keymap_get_default() {
 	any_map_set(keymap, "tool_text", "t");
 	any_map_set(keymap, "tool_clone", "l");
 	any_map_set(keymap, "tool_blur", "u");
-	any_map_set(keymap, "tool_smudge", "m");
 	any_map_set(keymap, "tool_particle", "p");
 	any_map_set(keymap, "tool_colorid", "c");
 	any_map_set(keymap, "tool_picker", "v");
 	any_map_set(keymap, "tool_bake", "k");
-	any_map_set(keymap, "tool_gizmo", "");
+	any_map_set(keymap, "tool_cursor", "r");
 	any_map_set(keymap, "tool_material", "");
 	any_map_set(keymap, "swap_brush_eraser", "");
 	return keymap;

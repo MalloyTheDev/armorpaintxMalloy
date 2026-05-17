@@ -17,6 +17,8 @@ context_t *context_create() {
 	c->show_envmap_handle      = ui_handle_create();
 	c->show_envmap_blur        = false;
 	c->show_envmap_blur_handle = ui_handle_create();
+	c->capturing_screenshot    = false;
+	c->capture_background      = false;
 	c->envmap_angle            = 0.0;
 	c->light_angle             = 0.0;
 	c->cull_backfaces          = true;
@@ -26,7 +28,7 @@ context_t *context_create() {
 	c->layers_destination      = EXPORT_DESTINATION_DISK;
 	c->split_by                = SPLIT_TYPE_OBJECT;
 	c->select_time             = 0.0;
-	c->viewport_mode           = g_config->viewport_mode == 0 ? VIEWPORT_MODE_LIT : VIEWPORT_MODE_PATH_TRACE;
+	c->viewport_mode           = g_config->viewport_mode;
 	c->hscale_was_changed      = false;
 	c->export_mesh_format      = MESH_FORMAT_OBJ;
 	c->export_mesh_index       = 0;
@@ -74,6 +76,7 @@ context_t *context_create() {
 	c->picker_select_material  = false;
 	c->picker_mask_handle      = ui_handle_create();
 	c->pick_pos_nor_tex        = false;
+	c->pick_object_id          = false;
 	c->posx_picked             = 0.0;
 	c->posy_picked             = 0.0;
 	c->posz_picked             = 0.0;
@@ -97,6 +100,15 @@ context_t *context_create() {
 	c->last_particle_hit_x               = 0.0;
 	c->last_particle_hit_y               = 0.0;
 	c->last_particle_hit_z               = 0.0;
+	c->particle_friction                 = 0.1;
+	c->particle_bounciness               = 0.0;
+	c->particle_gravity_x                = 0.0;
+	c->particle_gravity_y                = 0.0;
+	c->particle_gravity_z                = -9.81;
+	c->particle_lifetime                 = 5.0;
+	c->particle_mass                     = 1.0;
+	c->particle_random                   = 0.1;
+	c->particle_spawn_distance           = 0.3;
 	c->layer_filter                      = 0;
 	c->gizmo_started                     = false;
 	c->gizmo_offset                      = 0.0;
@@ -125,7 +137,6 @@ context_t *context_create() {
 	c->brush_nodes_angle                 = 0.0;
 	c->brush_nodes_hardness              = 1.0;
 	c->brush_directional                 = false;
-	c->brush_radius_handle               = ui_handle_create();
 	c->brush_scale_x                     = 1.0;
 	c->brush_decal_mask_radius           = 0.5;
 	c->brush_decal_mask_radius_handle    = ui_handle_create();
@@ -163,6 +174,8 @@ context_t *context_create() {
 	c->sym_y                             = false;
 	c->sym_z                             = false;
 	c->fill_type_handle                  = ui_handle_create();
+	c->blur_type_handle                  = ui_handle_create();
+	c->blur_type                         = BLUR_TYPE_BLUR;
 	c->paint2d                           = false;
 	c->maximized_sidebar_width           = 0;
 	c->drag_dest                         = 0;
@@ -175,14 +188,12 @@ void context_init() {
 	g_context->tool                       = TOOL_TYPE_BRUSH;
 	g_context->color_picker_previous_tool = TOOL_TYPE_BRUSH;
 	g_context->brush_radius               = 0.5;
-	g_context->brush_radius_handle->f     = 0.5;
 	g_context->brush_hardness             = 1.0;
 }
 
 bool context_use_deferred() {
 	return g_config->render_mode != RENDER_MODE_FORWARD &&
-	       (g_context->viewport_mode == VIEWPORT_MODE_LIT || g_context->viewport_mode == VIEWPORT_MODE_PATH_TRACE) &&
-	       g_context->tool != TOOL_TYPE_COLORID;
+	       (g_context->viewport_mode == VIEWPORT_MODE_LIT || g_context->viewport_mode == VIEWPORT_MODE_PATH_TRACE) && g_context->tool != TOOL_TYPE_COLORID;
 }
 
 void context_select_material(i32 i) {
@@ -261,7 +272,7 @@ void context_set_layer(slot_layer_t *l) {
 	if (l == g_context->layer) {
 		return;
 	}
-	g_context->layer        = l;
+	g_context->layer          = l;
 	ui_header_handle->redraws = 2;
 
 	gpu_texture_t *current = _draw_current;
@@ -284,9 +295,9 @@ void context_select_tool(i32 i) {
 	g_context->tool = i;
 	make_material_parse_paint_material(true);
 	make_material_parse_mesh_material();
-	g_context->ddirty            = 3;
+	g_context->ddirty              = 3;
 	viewport_mode_t _viewport_mode = g_context->viewport_mode;
-	g_context->viewport_mode     = VIEWPORT_MODE_MINUS_ONE;
+	g_context->viewport_mode       = VIEWPORT_MODE_NONE;
 	context_set_viewport_mode(_viewport_mode);
 
 	context_init_tool();
@@ -295,15 +306,11 @@ void context_select_tool(i32 i) {
 }
 
 void context_init_tool() {
-	bool decal = context_is_decal();
-	if (decal) {
+	if (context_is_decal()) {
 		if (g_context->tool == TOOL_TYPE_TEXT) {
 			util_render_make_text_preview();
 		}
 		util_render_make_decal_preview();
-	}
-	else if (g_context->tool == TOOL_TYPE_PARTICLE) {
-		util_particle_init();
 	}
 	else if (g_context->tool == TOOL_TYPE_BAKE) {
 		// Bake in lit mode for now
@@ -393,6 +400,21 @@ bool context_in_swatches() {
 	return string_equals(tab, tr("Swatches"));
 }
 
+bool context_in_brushes() {
+	char *tab = ui_hovered_tab_name();
+	return string_equals(tab, tr("Brushes"));
+}
+
+bool context_in_fonts() {
+	char *tab = ui_hovered_tab_name();
+	return string_equals(tab, tr("Fonts"));
+}
+
+bool context_in_textures() {
+	char *tab = ui_hovered_tab_name();
+	return string_equals(tab, tr("Textures"));
+}
+
 bool context_in_browser() {
 	char *tab = ui_hovered_tab_name();
 	return string_equals(tab, tr("Browser"));
@@ -444,6 +466,10 @@ void context_set_viewport_mode(viewport_mode_t mode) {
 	if (g_context->viewport_mode == VIEWPORT_MODE_PATH_TRACE && g_context->tool == TOOL_TYPE_BAKE) {
 		g_context->viewport_mode = VIEWPORT_MODE_LIT;
 	}
+}
+
+void context_set_camera_controls(int i) {
+	g_context->camera_controls = i;
 }
 
 void context_load_envmap() {

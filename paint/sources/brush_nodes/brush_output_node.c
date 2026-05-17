@@ -24,11 +24,11 @@ void brush_output_node_parse_inputs(brush_output_node_t *self) {
 	}
 	if (opac->_str != NULL) { // string
 		g_context->brush_mask_image_is_alpha = ends_with(opac->_str, ".a");
-		opac->_str                             = string_copy(substring(opac->_str, 0, string_last_index_of(opac->_str, ".")));
+		opac->_str                           = string_copy(substring(opac->_str, 0, string_last_index_of(opac->_str, ".")));
 		g_context->brush_nodes_opacity       = 1.0;
-		i32 index                              = string_array_index_of(project_asset_names, opac->_str);
+		i32 index                            = string_array_index_of(project_asset_names, opac->_str);
 		if (index != -1) {
-			asset_t *asset                = project_assets->buffer[index];
+			asset_t *asset              = project_assets->buffer[index];
 			g_context->brush_mask_image = project_get_image(asset);
 		}
 	}
@@ -45,10 +45,10 @@ void brush_output_node_parse_inputs(brush_output_node_t *self) {
 	}
 	if (stencil->_str != NULL) { // string
 		g_context->brush_stencil_image_is_alpha = ends_with(stencil->_str, ".a");
-		stencil->_str                             = string_copy(substring(stencil->_str, 0, string_last_index_of(stencil->_str, ".")));
-		i32 index                                 = string_array_index_of(project_asset_names, stencil->_str);
+		stencil->_str                           = string_copy(substring(stencil->_str, 0, string_last_index_of(stencil->_str, ".")));
+		i32 index                               = string_array_index_of(project_asset_names, stencil->_str);
 		if (index != -1) {
-			asset_t *asset                   = project_assets->buffer[index];
+			asset_t *asset                 = project_assets->buffer[index];
 			g_context->brush_stencil_image = project_get_image(asset);
 		}
 	}
@@ -64,12 +64,23 @@ void brush_output_node_parse_inputs(brush_output_node_t *self) {
 }
 
 void brush_output_paint(brush_output_node_t *self) {
-	bool down = mouse_down("left") || pen_down("tip");
+	bool down    = mouse_down("left") || pen_down("tip");
+	bool started = mouse_started("left") || pen_started("tip");
 
 	// Set color pick
 	if (down && g_context->tool == TOOL_TYPE_COLORID && project_assets->length > 0) {
-		g_context->colorid_picked = true;
-		ui_toolbar_handle->redraws  = 1;
+		g_context->colorid_picked  = true;
+		ui_toolbar_handle->redraws = 1;
+	}
+
+	// Path layer - add path points only
+	if (slot_layer_is_path(g_context->layer) && !started) {
+		return;
+	}
+
+	// Path layer - dragging existing path point
+	if (slot_layer_is_path(g_context->layer) && util_layer_is_path_point_dragging()) {
+		return;
 	}
 
 	// Prevent painting the same spot
@@ -92,10 +103,16 @@ void brush_output_paint(brush_output_node_t *self) {
 		brush_output_node_parse_inputs(self);
 	}
 
+	// Path layer - add point and repaint
+	if (slot_layer_is_path(g_context->layer)) {
+		util_layer_add_path_point(g_context->layer, g_context->paint_vec.x, g_context->paint_vec.y);
+		return;
+	}
+
 	if (g_context->painted <= 1) {
 		g_context->pdirty = 1;
 		g_context->rdirty = 2;
-		sculpt_push_undo    = true;
+		sculpt_push_undo  = true;
 	}
 }
 
@@ -116,11 +133,11 @@ void brush_output_node_run(brush_output_node_t *self, i32 from) {
 		left += w / (float)sys_w();
 		top += w / (float)sys_h();
 
-		#ifdef IRON_IOS
+#ifdef IRON_IOS
 		if (config_is_iphone()) {
 			top += w / (float)sys_h();
 		}
-		#endif
+#endif
 	}
 
 	// First time init
@@ -135,9 +152,8 @@ void brush_output_node_run(brush_output_node_t *self, i32 from) {
 	}
 
 	// Do not paint over fill layer
-	bool fill_layer = g_context->layer->fill_layer != NULL && g_context->tool != TOOL_TYPE_PICKER && g_context->tool != TOOL_TYPE_MATERIAL &&
-	                  g_context->tool != TOOL_TYPE_COLORID;
-	if (fill_layer) {
+	if (g_context->layer->fill_material != NULL && g_context->tool != TOOL_TYPE_PICKER && g_context->tool != TOOL_TYPE_MATERIAL &&
+	    g_context->tool != TOOL_TYPE_COLORID) {
 		return;
 	}
 
@@ -165,9 +181,9 @@ brush_output_node_t *brush_output_node_create(ui_node_t *raw, f32_array_t *args)
 	g_context->run_brush          = brush_output_node_run;
 	g_context->parse_brush_inputs = brush_output_node_parse_inputs;
 
-	brush_output_node_t *n = GC_ALLOC_INIT(brush_output_node_t, {0});
-	n->base                = logic_node_create(n);
-	n->raw                 = raw;
+	brush_output_node_t *n            = GC_ALLOC_INIT(brush_output_node_t, {0});
+	n->base                           = logic_node_create(n);
+	n->raw                            = raw;
 	g_context->brush_output_node_inst = n;
 	return n;
 }

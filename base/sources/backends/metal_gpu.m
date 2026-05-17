@@ -11,10 +11,10 @@ id get_metal_layer(void);
 id get_metal_device(void);
 id get_metal_queue(void);
 
-static id<MTLCommandBuffer>        command_buffer    = nil;
-static id<MTLRenderCommandEncoder> command_encoder   = nil;
-static id<MTLArgumentEncoder>      argument_encoder  = nil;
-static id<MTLBuffer>               argument_buffer   = nil;
+static id<MTLCommandBuffer>        command_buffer   = nil;
+static id<MTLRenderCommandEncoder> command_encoder  = nil;
+static id<MTLArgumentEncoder>      argument_encoder = nil;
+static id<MTLBuffer>               argument_buffer  = nil;
 static id<CAMetalDrawable>         drawable;
 static id<MTLSamplerState>         linear_sampler;
 static id<MTLSamplerState>         point_sampler;
@@ -618,31 +618,30 @@ void gpu_vertex_buffer_init(gpu_buffer_t *buffer, int count, gpu_vertex_structur
 	buffer->impl.metal_buffer = (__bridge_retained void *)buf;
 }
 
-void *gpu_vertex_buffer_lock(gpu_buffer_t *buf) {
-	id<MTLBuffer> buffer = (__bridge id<MTLBuffer>)buf->impl.metal_buffer;
-	return [buffer contents];
+void *gpu_vertex_buffer_lock(gpu_buffer_t *buffer) {
+	id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer->impl.metal_buffer;
+	return [buf contents];
 }
 
-void gpu_vertex_buffer_unlock(gpu_buffer_t *buf) {}
+void gpu_vertex_buffer_unlock(gpu_buffer_t *buffer) {}
 
-void gpu_index_buffer_init(gpu_buffer_t *buffer, int indexCount) {
-	buffer->count = indexCount;
+void gpu_index_buffer_init(gpu_buffer_t *buffer, int count) {
+	buffer->count = count;
 
 	id<MTLDevice>      device  = get_metal_device();
 	MTLResourceOptions options = MTLResourceCPUCacheModeWriteCombined;
 	options |= MTLResourceStorageModeShared;
 
-	buffer->impl.metal_buffer = (__bridge_retained void *)[device newBufferWithLength:sizeof(uint32_t) * indexCount options:options];
+	buffer->impl.metal_buffer = (__bridge_retained void *)[device newBufferWithLength:sizeof(uint32_t) * count options:options];
 	if (buffer->impl.metal_buffer == nil) {
 		gpu_cleanup();
-		buffer->impl.metal_buffer = (__bridge_retained void *)[device newBufferWithLength:sizeof(uint32_t) * indexCount options:options];
+		buffer->impl.metal_buffer = (__bridge_retained void *)[device newBufferWithLength:sizeof(uint32_t) * count options:options];
 	}
 }
 
 void *gpu_index_buffer_lock(gpu_buffer_t *buffer) {
-	id<MTLBuffer> metal_buffer = (__bridge id<MTLBuffer>)buffer->impl.metal_buffer;
-	uint8_t      *data         = (uint8_t *)[metal_buffer contents];
-	return data;
+	id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer->impl.metal_buffer;
+	return [buf contents];
 }
 
 void gpu_index_buffer_unlock(gpu_buffer_t *buffer) {}

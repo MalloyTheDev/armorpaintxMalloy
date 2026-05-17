@@ -404,7 +404,7 @@ void ui_viewnodes_on_canvas_context_menu() {
 	if (ui_menu_button(tr("Delete"), "delete", ICON_DELETE)) {
 		sys_notify_on_next_frame(&ui_viewnodes_on_canvas_delete, NULL);
 	}
-	if (ui_menu_button(tr("Duplicate"), "", ICON_DUPLICATE)) {
+	if (ui_menu_button(tr("Duplicate"), "ctrl+d", ICON_DUPLICATE)) {
 		sys_notify_on_next_frame(&ui_viewnodes_on_canvas_released_duplicate, NULL);
 	}
 	if (selected != NULL && string_equals(selected->type, "RGB")) {
@@ -520,7 +520,7 @@ f32 ui_nodes_get_zoom_delta() {
 	       : g_config->zoom_direction == ZOOM_DIRECTION_VERTICAL_INVERTED   ? -ui->input_dy
 	       : g_config->zoom_direction == ZOOM_DIRECTION_HORIZONTAL          ? ui->input_dx
 	       : g_config->zoom_direction == ZOOM_DIRECTION_HORIZONTAL_INVERTED ? ui->input_dx
-	                                                                          : -(ui->input_dy - ui->input_dx);
+	                                                                        : -(ui->input_dy - ui->input_dx);
 }
 
 ui_canvas_control_t *ui_nodes_get_canvas_control(bool controls_down, bool is_node_view) {
@@ -745,12 +745,12 @@ gpu_texture_t *ui_nodes_draw_grid(f32 zoom) {
 	draw_begin(grid, true, ui->ops->theme->SEPARATOR_COL);
 
 	i32 sep_col      = ui->ops->theme->SEPARATOR_COL;
-	i32 line_primary = sep_col - 0x00050505;
+	i32 line_primary = base_darker(sep_col, 0x00050505);
 	if (line_primary < 0xff000000) {
 		line_primary = sep_col + 0x00050505;
 	}
 
-	i32 line_secondary = sep_col - 0x00090909;
+	i32 line_secondary = base_darker(sep_col, 0x00090909);
 	if (line_secondary < 0xff000000) {
 		line_secondary = sep_col + 0x00090909;
 	}
@@ -787,7 +787,16 @@ void ui_nodes_recompile() {
 			if (ui_nodes_is_tab_selected()) {
 				g_context->material = ui_nodes_tabs->buffer[ui_nodes_tab_index()];
 			}
-			layers_is_fill_material() ? layers_update_fill_layers() : util_render_make_material_preview();
+			if (layers_is_fill_material()) {
+				layers_update_fill_layers();
+			}
+			else if (layers_is_path_material()) {
+				layers_update_path_layers();
+			}
+			else {
+				util_render_make_material_preview();
+			}
+
 			g_context->material = _material;
 
 			if (ui_view2d_show && ui_view2d_type == VIEW_2D_TYPE_NODE) {
@@ -805,9 +814,15 @@ void ui_nodes_recompile() {
 	else if (ui_nodes_recompile_mat_final) {
 		make_material_parse_paint_material(true);
 
-		if (ui_nodes_canvas_type == CANVAS_TYPE_MATERIAL && layers_is_fill_material()) {
-			layers_update_fill_layers();
-			util_render_make_material_preview();
+		if (ui_nodes_canvas_type == CANVAS_TYPE_MATERIAL) {
+			if (layers_is_fill_material()) {
+				layers_update_fill_layers();
+				util_render_make_material_preview();
+			}
+			if (layers_is_path_material()) {
+				layers_update_path_layers();
+				util_render_make_material_preview();
+			}
 		}
 
 		bool decal = context_is_decal();
@@ -1045,7 +1060,8 @@ void ui_nodes_make_node_preview(ui_node_t *node) {
 		return;
 	}
 
-	ui_node_t_array_t *nodes = ui_nodes_get_canvas(false)->nodes;
+	ui_node_canvas_t  *current_canvas = ui_nodes_get_canvas(true);
+	ui_node_t_array_t *nodes          = current_canvas->nodes;
 	if (array_index_of(nodes, node) == -1) {
 		return;
 	}
@@ -1056,8 +1072,31 @@ void ui_nodes_make_node_preview(ui_node_t *node) {
 		any_imap_set(g_context->node_preview_map, node->id, img);
 	}
 
+	ui_node_canvas_t  *group_canvas  = NULL;
+	ui_node_t_array_t *group_parents = NULL;
+	if (ui_nodes_group_stack->length > 0) {
+		group_canvas            = ui_nodes_group_stack->buffer[ui_nodes_group_stack->length - 1]->canvas;
+		group_parents           = any_array_create_from_raw((void *[]){}, 0);
+		ui_node_canvas_t *outer = ui_nodes_get_canvas(false);
+		for (i32 i = 0; i < ui_nodes_group_stack->length; ++i) {
+			char      *gname      = ui_nodes_group_stack->buffer[i]->canvas->name;
+			ui_node_t *group_node = NULL;
+			for (i32 j = 0; j < outer->nodes->length; ++j) {
+				ui_node_t *n = outer->nodes->buffer[j];
+				if (string_equals(n->type, "GROUP") && string_equals(n->name, gname)) {
+					group_node = n;
+					break;
+				}
+			}
+			if (group_node != NULL) {
+				any_array_push(group_parents, group_node);
+			}
+			outer = ui_nodes_group_stack->buffer[i]->canvas;
+		}
+	}
+
 	ui_nodes_hwnd->redraws = 2;
-	util_render_make_node_preview(ui_nodes_get_canvas(false), node, img, NULL, NULL);
+	util_render_make_node_preview(current_canvas, node, img, group_canvas, group_parents);
 }
 
 void ui_nodes_render(void *_) {

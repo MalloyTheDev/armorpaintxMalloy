@@ -93,12 +93,12 @@ void make_material_parse_mesh_material() {
 	}
 }
 
-void make_material_parse_mesh_preview_material(material_data_t *md) {
+void make_material_parse_mesh_preview_material() {
 	if (!make_material_get_mout()) {
 		return;
 	}
 
-	material_data_t  *m    = md == NULL ? project_materials->buffer[0]->data : md;
+	material_data_t  *m    = project_materials->buffer[0]->data;
 	shader_context_t *scon = NULL;
 	for (i32 i = 0; i < m->_->shader->contexts->length; ++i) {
 		shader_context_t *c = m->_->shader->contexts->buffer[i];
@@ -515,7 +515,7 @@ char *make_material_blend_mode_mask(node_shader_t *kong, i32 blending, char *col
 
 f32 make_material_get_displace_strength() {
 	vec4_t sc = context_main_object()->base->transform->scale;
-	return g_config->displace_strength * 0.02 * sc.x;
+	return g_config->displace_strength * 0.1 * sc.x;
 }
 
 void make_material_parse_depth_material() {

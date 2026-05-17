@@ -17,6 +17,7 @@ typedef struct update_info {
 } update_info_t;
 
 i32 ui_menubar_category = 0;
+int ui_menubar_capture_screenshot_frame = 0;
 
 void ui_menubar_init() {
 	ui_menubar_hwnd->layout        = UI_LAYOUT_HORIZONTAL;
@@ -162,11 +163,15 @@ void ui_menubar_draw_category_items_on_check_for_updates_downloaded(char *url, b
 	}
 }
 
-void ui_menubar_draw_category_items_capture_screenshot(void *_) {
-	viewport_capture_screenshot();
+void ui_menubar_capture_screenshot(void *_) {
+	ui_menubar_capture_screenshot_frame++;
+	if (ui_menubar_capture_screenshot_frame == 2) {
+		viewport_capture_screenshot();
+		sys_remove_update(ui_menubar_capture_screenshot);
+	}
 }
 
-void ui_menubar_draw_category_items_import_envmap(char *path) {
+void ui_menubar_import_envmap(char *path) {
 	if (!ends_with(path, ".hdr")) {
 		console_error(tr("Error: .hdr file expected"));
 		return;
@@ -264,9 +269,9 @@ void ui_menubar_draw_category_items() {
 			project_save_as(false);
 		}
 
-		ui->changed                      = false;
-		ui_handle_t *h_pack_assets       = ui_handle(__ID__);
-		h_pack_assets->b                 = g_context->pack_assets_on_save;
+		ui->changed                    = false;
+		ui_handle_t *h_pack_assets     = ui_handle(__ID__);
+		h_pack_assets->b               = g_context->pack_assets_on_save;
 		g_context->pack_assets_on_save = ui_check(h_pack_assets, tr("Pack Assets"), "");
 		if (ui->changed) {
 			ui_menu_keep_open = true;
@@ -279,7 +284,7 @@ void ui_menubar_draw_category_items() {
 				project_import_asset(string_array_join(path_texture_formats(), ","), false);
 			}
 			if (ui_menu_button(tr("Envmap..."), "", ICON_LANDSCAPE)) {
-				ui_files_show("hdr", false, false, &ui_menubar_draw_category_items_import_envmap);
+				ui_files_show("hdr", false, false, &ui_menubar_import_envmap);
 			}
 			if (ui_menu_button(tr("Font..."), "", ICON_FONT)) {
 				project_import_asset("ttf,ttc,otf", true);
@@ -470,9 +475,17 @@ void ui_menubar_draw_category_items() {
 		}
 
 		if (ui_menu_button(tr("Capture Screenshot"), "", ICON_PHOTO)) {
-			sys_notify_on_next_frame(&ui_menubar_draw_category_items_capture_screenshot, NULL);
+			g_context->capturing_screenshot = true;
+			ui_menubar_capture_screenshot_frame = 0;
+			sys_notify_on_update(&ui_menubar_capture_screenshot, NULL);
 			ui->changed = false; // Close menu
 		}
+
+		// if (g_config->experimental) {
+		// 	ui_handle_t *h = ui_handle(__ID__);
+		// 	h->b = g_context->capture_background;
+		// 	g_context->capture_background = ui_check(h, tr("Capture Background"), "");
+		// }
 
 		if (g_config->experimental && !viewport_recording && ui_menu_button(tr("Capture Video"), "", ICON_MOVIE)) {
 			viewport_capture_video_begin();
@@ -497,49 +510,8 @@ void ui_menubar_draw_category_items() {
 	else if (ui_menubar_category == MENUBAR_CATEGORY_MODE) {
 		ui_handle_t *mode_handle = ui_handle(__ID__);
 		mode_handle->i           = g_context->viewport_mode;
-		string_array_t *modes    = any_array_create_from_raw(
-            (void *[]){
-                tr("Lit"),
-                tr("Base Color"),
-                tr("Normal"),
-                tr("Occlusion"),
-                tr("Roughness"),
-                tr("Metallic"),
-                tr("Opacity"),
-                tr("Height"),
-                tr("Emission"),
-                tr("Subsurface"),
-                tr("TexCoord"),
-                tr("Object Normal"),
-                tr("Material ID"),
-                tr("Object ID"),
-                tr("Mask"),
-            },
-            15);
-		string_array_t *shortcuts = any_array_create_from_raw(
-		    (void *[]){
-		        "l",
-		        "b",
-		        "n",
-		        "o",
-		        "r",
-		        "m",
-		        "a",
-		        "h",
-		        "e",
-		        "s",
-		        "t",
-		        "1",
-		        "2",
-		        "3",
-		        "4",
-		    },
-		    15);
-
-		if (gpu_raytrace_supported()) {
-			any_array_push(modes, tr("Path Traced"));
-			any_array_push(shortcuts, "p");
-		}
+		string_array_t *modes    = base_get_viewport_modes();
+		string_array_t *shortcuts = base_get_viewport_mode_shortcuts();
 
 		if (g_config->workflow == WORKFLOW_BASE) {
 			array_splice(modes, 9, 1);
@@ -640,7 +612,7 @@ void ui_menubar_draw_category_items() {
 			viewport_zoom(-0.2);
 		}
 
-		camera_object_t *cam       = scene_camera;
+		camera_object_t *cam     = scene_camera;
 		g_context->fov_handle->f = math_floor(cam->data->fov * 100) / 100.0;
 		ui_menu_align();
 		cam->data->fov = ui_slider(g_context->fov_handle, tr("FoV"), 0.3, 1.4, true, 100.0, true, UI_ALIGN_RIGHT, true);

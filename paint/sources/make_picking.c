@@ -1,7 +1,7 @@
 
 #include "global.h"
 
-char                     *str_get_pos_nor_from_depth = "\
+char *str_get_pos_nor_from_depth = "\
 fun get_pos_from_depth(uv: float2, invVP: float4x4): float3 { \
 	var depth: float = sample_lod(gbufferD, sampler_linear, float2(uv.x, 1.0 - uv.y), 0.0).r; \
 	var wpos: float4 = float4(uv * 2.0 - 1.0, depth, 1.0); \
@@ -15,7 +15,7 @@ fun get_nor_from_depth(p0: float3, uv: float2, invVP: float4x4, tex_step: float2
 } \
 ";
 
-void make_colorid_picker_run(node_shader_t *kong) {
+void make_picking_run(node_shader_t *kong) {
 	// Mangle vertices to form full screen triangle
 	node_shader_write_vert(kong, "output.pos = float4(-1.0 + float((vertex_id() & 1) << 2), -1.0 + float((vertex_id() & 2) << 1), 0.0, 1.0);");
 
@@ -49,6 +49,13 @@ void make_colorid_picker_run(node_shader_t *kong) {
 			node_shader_write_frag(kong, "output[0] = float4(out_pos_from_depth, tex_coord_inp.x);");
 			node_shader_write_frag(kong, "output[1] = float4(out_nor_from_depth, tex_coord_inp.y);");
 		}
+		else if (slot_layer_is_mask(g_context->layer)) {
+			kong->frag_out = "float4[2]";
+			node_shader_add_texture(kong, "texpaint", NULL);
+			node_shader_write_frag(kong, "var texpaint_val: float = sample_lod(texpaint, sampler_linear, tex_coord_inp, 0.0).r;");
+			node_shader_write_frag(kong, "output[0] = float4(texpaint_val, texpaint_val, texpaint_val, 1.0);");
+			node_shader_write_frag(kong, "output[1].rg = tex_coord_inp.xy;");
+		}
 		else {
 			kong->frag_out = "float4[4]";
 			node_shader_add_texture(kong, "texpaint", NULL);
@@ -59,5 +66,14 @@ void make_colorid_picker_run(node_shader_t *kong) {
 			node_shader_write_frag(kong, "output[2] = sample_lod(texpaint_pack, sampler_linear, tex_coord_inp, 0.0);");
 			node_shader_write_frag(kong, "output[3].rg = tex_coord_inp.xy;");
 		}
+	}
+	else if (g_context->tool == TOOL_TYPE_CURSOR) {
+		kong->frag_out = "float4";
+		node_shader_add_texture(kong, "gbuffer1", NULL);
+		node_shader_add_constant(kong, "gbuffer_size: float2", "_gbuffer_size");
+		node_shader_add_constant(kong, "inp: float4", "_input_brush");
+		node_shader_write_frag(
+		    kong, "var inp_co: uint2 = uint2(uint(constants.inp.x * constants.gbuffer_size.x), uint(constants.inp.y * constants.gbuffer_size.y));");
+		node_shader_write_frag(kong, "output = gbuffer1[inp_co];");
 	}
 }

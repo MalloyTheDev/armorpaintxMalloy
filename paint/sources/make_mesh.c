@@ -144,7 +144,7 @@ node_shader_context_t *make_mesh_run(material_t *data, i32 layer_pass) {
 				}
 			}
 		}
-		node_shader_write_vert(kong, string("output.wposition += wnormal * float3(height, height, height) * float3(%s, %s, %s);",
+		node_shader_write_vert(kong, string("output.wposition += vert_wnormal * float3(height, height, height) * float3(%s, %s, %s);",
 		                                    f32_to_string(displace_strength), f32_to_string(displace_strength), f32_to_string(displace_strength)));
 	}
 
@@ -168,6 +168,11 @@ node_shader_context_t *make_mesh_run(material_t *data, i32 layer_pass) {
 			sculpt_make_mesh_run(kong, l);
 		}
 	}
+
+	if (g_context->colorid_viewport_mask && g_context->tool != TOOL_TYPE_COLORID) {
+		make_discard_color_id(kong, "tex_coord");
+	}
+
 	if (g_context->tool == TOOL_TYPE_COLORID) {
 		texture_count++;
 		node_shader_add_texture(kong, "texcolorid", "_texcolorid");
@@ -256,20 +261,29 @@ node_shader_context_t *make_mesh_run(material_t *data, i32 layer_pass) {
 			if (is_material_tool && l != g_context->layer) {
 				continue;
 			}
-			if (!slot_layer_is_layer(l) || !slot_layer_is_visible(l)) {
+			if (!slot_layer_is_visible(l)) {
+				continue;
+			}
+			if (!slot_layer_is_layer(l)) {
+				continue;
+			}
+			if (slot_layer_get_filters(l, false) != NULL) {
 				continue;
 			}
 
-			i32                   count = 3;
+			i32 count = 3;
+
 			slot_layer_t_array_t *masks = slot_layer_get_masks(l, true);
 			if (masks != NULL) {
 				count += masks->length;
 			}
+
 			texture_count += count;
 			if (texture_count >= GPU_MAX_TEXTURES - 3) {
 				texture_count = start_count + count + 3; // gbuffer0_copy, gbuffer1_copy, gbuffer2_copy
 				make_mesh_layer_pass_count++;
 			}
+
 			if (layer_pass == make_mesh_layer_pass_count - 1) {
 				any_array_push(layers, l);
 			}
@@ -304,7 +318,7 @@ node_shader_context_t *make_mesh_run(material_t *data, i32 layer_pass) {
 			node_shader_write_frag(kong, string("texpaint_sample = sample_lod(texpaint%s, sampler_linear, %s, 0.0);", i32_to_string(l->id), tex_coord));
 			node_shader_write_frag(kong, "texpaint_opac = texpaint_sample.a;");
 
-			if (g_context->viewport_mode == VIEWPORT_MODE_LIT && make_material_transluc_used) {
+			if (make_material_transluc_used && g_context->viewport_mode != VIEWPORT_MODE_PATH_TRACE) {
 				con_mesh->data->cull_mode = "none";
 				kong->frag_wvpposition    = true;
 				node_shader_add_function(kong, str_dither_bayer);
@@ -312,7 +326,7 @@ node_shader_context_t *make_mesh_run(material_t *data, i32 layer_pass) {
 				node_shader_write_frag(
 				    kong, "var fragcoord1: float2 = float2(input.wvpposition.x / input.wvpposition.w, input.wvpposition.y / input.wvpposition.w) * 0.5 + 0.5;");
 				node_shader_write_frag(kong, "var dither: float = dither_bayer(fragcoord1 * constants.gbuffer_size);");
-				node_shader_write_frag(kong, "if (texpaint_opac < dither) { discard; }");
+				node_shader_write_frag(kong, "if (texpaint_opac <= dither) { discard; }");
 			}
 
 			slot_layer_t_array_t *masks = slot_layer_get_masks(l, true);
@@ -600,11 +614,16 @@ node_shader_context_t *make_mesh_run(material_t *data, i32 layer_pass) {
 		}
 		else if (g_context->viewport_mode == VIEWPORT_MODE_OBJECT_ID) {
 			node_shader_add_constant(kong, "object_id: float", "_object_id");
-			node_shader_write_frag(kong, "var obid: float = constants.object_id + 1.0 / 255.0;");
-			node_shader_write_frag(kong, "var id_r: float = frac(sin(dot(float2(obid, obid * 20.0), float2(12.9898, 78.233))) * 43758.5453);");
-			node_shader_write_frag(kong, "var id_g: float = frac(sin(dot(float2(obid * 20.0, obid), float2(12.9898, 78.233))) * 43758.5453);");
-			node_shader_write_frag(kong, "var id_b: float = frac(sin(dot(float2(obid, obid * 40.0), float2(12.9898, 78.233))) * 43758.5453);");
-			node_shader_write_frag(kong, "output[1] = float4(id_r, id_g, id_b, 1.0);");
+			if (g_context->pick_object_id) {
+				node_shader_write_frag(kong, "output[1] = float4((constants.object_id + 1.0) / 255.0, 0.0, 0.0, 1.0);");
+			}
+			else {
+				node_shader_write_frag(kong, "var obid: float = constants.object_id + 1.0 / 255.0;");
+				node_shader_write_frag(kong, "var id_r: float = frac(sin(dot(float2(obid, obid * 20.0), float2(12.9898, 78.233))) * 43758.5453);");
+				node_shader_write_frag(kong, "var id_g: float = frac(sin(dot(float2(obid * 20.0, obid), float2(12.9898, 78.233))) * 43758.5453);");
+				node_shader_write_frag(kong, "var id_b: float = frac(sin(dot(float2(obid, obid * 40.0), float2(12.9898, 78.233))) * 43758.5453);");
+				node_shader_write_frag(kong, "output[1] = float4(id_r, id_g, id_b, 1.0);");
+			}
 		}
 		else if (g_context->viewport_mode == VIEWPORT_MODE_MASK &&
 		         (slot_layer_get_masks(g_context->layer, true) != NULL || slot_layer_is_mask(g_context->layer))) {

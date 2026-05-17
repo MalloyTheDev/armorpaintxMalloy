@@ -607,12 +607,7 @@ void box_preferences_pen_tab() {
 void box_preferences_viewport_tab() {
 	ui_handle_t *h_mode        = ui_handle(__ID__);
 	h_mode->i                  = g_config->viewport_mode;
-	string_array_t *mode_combo = any_array_create_from_raw(
-	    (void *[]){
-	        tr("Lit"),
-	        tr("Path Traced"),
-	    },
-	    2);
+	string_array_t *mode_combo = base_get_viewport_modes();
 	ui_combo(h_mode, mode_combo, tr("Default Mode"), true, UI_ALIGN_LEFT, true);
 	if (h_mode->changed) {
 		g_config->viewport_mode = h_mode->i;
@@ -1057,7 +1052,7 @@ void box_preferences_plugins_tab() {
 
 	ui_handle_t *box_preferences_plugins_hsearch = ui_handle(__ID__);
 	if (!string_equals(box_preferences_plugins_hsearch->text, "")) {
-		ui_row(f32_array_create_from_raw((f32[]){ 0.85, 0.15 }, 2));
+		ui_row(f32_array_create_from_raw((f32[]){0.85, 0.15}, 2));
 	}
 	box_preferences_plugins_hsearch->text = string_copy(ui_text_input(box_preferences_plugins_hsearch, tr("Search"), UI_ALIGN_LEFT, true, true));
 	if (!string_equals(box_preferences_plugins_hsearch->text, "") && (ui_button(tr("X"), UI_ALIGN_CENTER, "") || ui->is_escape_down)) {

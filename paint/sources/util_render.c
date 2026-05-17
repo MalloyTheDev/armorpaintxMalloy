@@ -51,7 +51,7 @@ void util_render_make_material_preview() {
 	camera_object_build_proj(scene_camera, -1.0);
 	camera_object_build_mat(scene_camera);
 
-	make_material_parse_mesh_preview_material(NULL);
+	make_material_parse_mesh_preview_material();
 	void (*_commands)(void) = render_path_commands;
 	gc_unroot(render_path_commands);
 	render_path_commands = render_path_preview_commands_preview;
@@ -126,7 +126,7 @@ void util_render_make_decal_preview() {
 	camera_object_build_proj(scene_camera, -1.0);
 	camera_object_build_mat(scene_camera);
 
-	make_material_parse_mesh_preview_material(NULL);
+	make_material_parse_mesh_preview_material();
 	void (*_commands)(void) = render_path_commands;
 	gc_unroot(render_path_commands);
 	render_path_commands = render_path_preview_commands_decal;
@@ -181,7 +181,7 @@ void util_render_make_text_preview() {
 	if (g_context->text_tool_image == NULL) {
 		g_context->text_tool_image = gpu_create_render_target(tex_w, tex_w, GPU_TEXTURE_FORMAT_RGBA32);
 	}
-	draw_begin(g_context->text_tool_image, true, 0xff000000);
+	draw_begin(g_context->text_tool_image, true, 0x00000000);
 	draw_set_font(font, font_size);
 	draw_set_color(0xffffffff);
 	draw_string(text, tex_w / 2.0 - text_w / 2.0, tex_w / 2.0 - text_h / 2.0);
@@ -264,8 +264,8 @@ void util_render_make_brush_preview() {
 		g_context->layer = g_context->layer->parent;
 	}
 
-	slot_material_t *_fill_layer = g_context->layer->fill_layer;
-	g_context->layer->fill_layer = NULL;
+	slot_material_t *_fill_material = g_context->layer->fill_material;
+	g_context->layer->fill_material = NULL;
 
 	render_path_paint_use_live_layer(true);
 	make_material_parse_paint_material(false);
@@ -375,10 +375,10 @@ void util_render_make_brush_preview() {
 	g_context->prev_paint_vec_y = -1;
 	g_context->pdirty           = _pdirty;
 	render_path_paint_use_live_layer(false);
-	g_context->layer->fill_layer = _fill_layer;
-	g_context->layer             = _layer;
-	g_context->material          = _material;
-	g_context->tool              = _tool;
+	g_context->layer->fill_material = _fill_material;
+	g_context->layer                = _layer;
+	g_context->material             = _material;
+	g_context->tool                 = _tool;
 	sys_notify_on_next_frame(&util_render_make_brush_preview_parse_paint_material, NULL);
 
 	// Restore paint mesh
@@ -474,26 +474,26 @@ void util_render_create_screen_aligned_full_data() {
 
 	// Mandatory vertex data names and sizes
 	gpu_vertex_structure_t *structure = GC_ALLOC_INIT(gpu_vertex_structure_t, {0});
-	gpu_vertex_struct_add(structure, "pos", GPU_VERTEX_DATA_I16_4X_NORM);
-	gpu_vertex_struct_add(structure, "nor", GPU_VERTEX_DATA_I16_2X_NORM);
-	gpu_vertex_struct_add(structure, "tex", GPU_VERTEX_DATA_I16_2X_NORM);
-	gpu_vertex_struct_add(structure, "col", GPU_VERTEX_DATA_I16_4X_NORM);
+	gpu_vertex_structure_add(structure, "pos", GPU_VERTEX_DATA_I16_4X_NORM);
+	gpu_vertex_structure_add(structure, "nor", GPU_VERTEX_DATA_I16_2X_NORM);
+	gpu_vertex_structure_add(structure, "tex", GPU_VERTEX_DATA_I16_2X_NORM);
+	gpu_vertex_structure_add(structure, "col", GPU_VERTEX_DATA_I16_4X_NORM);
 	gc_unroot(util_render_screen_aligned_full_vb);
 	util_render_screen_aligned_full_vb =
 	    gpu_create_vertex_buffer(math_floor(data->length / (float)math_floor(gpu_vertex_struct_size(structure) / 2.0)), structure);
 	gc_root(util_render_screen_aligned_full_vb);
-	buffer_t *vertices = gpu_lock_vertex_buffer(util_render_screen_aligned_full_vb);
-	for (i32 i = 0; i < math_floor((vertices->length) / 2.0); ++i) {
-		buffer_set_i16(vertices, i * 2, data->buffer[i]);
+	int16_t *vertices = gpu_vertex_buffer_lock(util_render_screen_aligned_full_vb);
+	for (i32 i = 0; i < data->length; ++i) {
+		vertices[i] = data->buffer[i];
 	}
 	gpu_vertex_buffer_unlock(util_render_screen_aligned_full_vb);
 
 	gc_unroot(util_render_screen_aligned_full_ib);
 	util_render_screen_aligned_full_ib = gpu_create_index_buffer(indices->length);
 	gc_root(util_render_screen_aligned_full_ib);
-	u32_array_t *id = gpu_lock_index_buffer(util_render_screen_aligned_full_ib);
-	for (i32 i = 0; i < id->length; ++i) {
-		id->buffer[i] = indices->buffer[i];
+	uint32_t *id = gpu_index_buffer_lock(util_render_screen_aligned_full_ib);
+	for (i32 i = 0; i < indices->length; ++i) {
+		id[i] = indices->buffer[i];
 	}
 	gpu_index_buffer_unlock(util_render_screen_aligned_full_ib);
 }

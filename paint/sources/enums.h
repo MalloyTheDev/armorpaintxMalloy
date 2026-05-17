@@ -28,9 +28,8 @@ typedef enum {
 
 typedef enum {
 	SPLIT_TYPE_OBJECT   = 0,
-	SPLIT_TYPE_GROUP    = 1,
-	SPLIT_TYPE_MATERIAL = 2,
-	SPLIT_TYPE_UDIM     = 3,
+	SPLIT_TYPE_MATERIAL = 1,
+	SPLIT_TYPE_UDIM     = 2,
 } split_type_t;
 
 typedef enum {
@@ -50,7 +49,7 @@ typedef enum {
 } bake_up_axis_t;
 
 typedef enum {
-	VIEWPORT_MODE_MINUS_ONE     = -1,
+	VIEWPORT_MODE_NONE          = -1,
 	VIEWPORT_MODE_LIT           = 0,
 	VIEWPORT_MODE_BASE_COLOR    = 1,
 	VIEWPORT_MODE_NORMAL_MAP    = 2,
@@ -146,6 +145,7 @@ typedef enum {
 } blend_type_t;
 
 typedef enum {
+	CAMERA_CONTROLS_NONE   = -1,
 	CAMERA_CONTROLS_ORBIT  = 0,
 	CAMERA_CONTROLS_ROTATE = 1,
 	CAMERA_CONTROLS_FLY    = 2,
@@ -188,6 +188,7 @@ typedef enum {
 	VIEW_2D_TYPE_NODE  = 1,
 	VIEW_2D_TYPE_FONT  = 2,
 	VIEW_2D_TYPE_LAYER = 3,
+	VIEW_2D_TYPE_UVMAP = 4,
 } view_2d_type_t;
 
 typedef enum {
@@ -228,14 +229,18 @@ typedef enum {
 	TOOL_TYPE_TEXT     = 4,
 	TOOL_TYPE_CLONE    = 5,
 	TOOL_TYPE_BLUR     = 6,
-	TOOL_TYPE_SMUDGE   = 7,
-	TOOL_TYPE_PARTICLE = 8,
-	TOOL_TYPE_COLORID  = 9,
-	TOOL_TYPE_PICKER   = 10,
-	TOOL_TYPE_BAKE     = 11,
-	TOOL_TYPE_MATERIAL = 12,
-	TOOL_TYPE_GIZMO    = 13,
+	TOOL_TYPE_PARTICLE = 7,
+	TOOL_TYPE_COLORID  = 8,
+	TOOL_TYPE_PICKER   = 9,
+	TOOL_TYPE_BAKE     = 10,
+	TOOL_TYPE_MATERIAL = 11,
+	TOOL_TYPE_CURSOR   = 12,
 } tool_type_t;
+
+typedef enum {
+	BLUR_TYPE_BLUR   = 0,
+	BLUR_TYPE_SMUDGE = 1,
+} blur_type_t;
 
 typedef enum {
 	TAB_AREA_SIDEBAR0 = 0,
@@ -304,11 +309,11 @@ typedef enum {
 	ICON_TEXT             = 4,
 	ICON_CLONE            = 5,
 	ICON_BLUR             = 6,
-	ICON_SMUDGE           = 7,
-	ICON_PARTICLE         = 8,
-	ICON_COLOR_ID         = 9,
-	ICON_PICKER           = 10,
-	ICON_BAKE             = 11,
+	ICON_PARTICLE         = 7,
+	ICON_COLOR_ID         = 8,
+	ICON_PICKER           = 9,
+	ICON_BAKE             = 10,
+	ICON_MATERIAL         = 11,
 	ICON_DROP             = 12,
 	ICON_MATERIAL_PREVIEW = 13,
 	ICON_FOLDER_FULL      = 14,
@@ -319,8 +324,8 @@ typedef enum {
 	ICON_PROPERTIES       = 19,
 	ICON_FOLDER_OPEN      = 20,
 	ICON_EMPTY            = 21,
-	ICON_GIZMO            = 22,
-	ICON_MATERIAL         = 23,
+	ICON_SMUDGE           = 22,
+	ICON_CURSOR           = 23,
 	ICON_MENU             = 24,
 	ICON_FILE_NEW         = 25,
 	ICON_FOLDER           = 26,
@@ -376,17 +381,17 @@ typedef enum {
 	ICON_LAYER            = 76,
 	ICON_LAYER_NEW        = 77,
 	ICON_WINDOW           = 78,
-	ICON_BOOKMARK         = 79,
+	ICON_GESTURE          = 79,
 	ICON_FLAG             = 80,
-	ICON_PIN              = 81,
-	ICON_LABEL            = 82,
+	ICON_CURVE            = 81,
+	ICON_PATH             = 82,
 	ICON_ACCOUNT          = 83,
 	ICON_ARROW_UP_LEFT    = 84,
-	ICON_ATTACHMENT       = 85,
+	ICON_GIZMO            = 85,
 	ICON_BLOCK            = 86,
 	ICON_LANDSCAPE        = 87,
 	ICON_CHAT             = 88,
-	ICON_CHICK            = 89,
+	ICON_EGG              = 89,
 	ICON_CLOUD            = 90,
 	ICON_PICKER2          = 91,
 	ICON_COPY             = 92,
@@ -408,7 +413,7 @@ typedef enum {
 	ICON_LAYERS           = 108,
 	ICON_LINK             = 109,
 	ICON_LOCK             = 110,
-	ICON_MAIL             = 111,
+	ICON_STICKER          = 111,
 	ICON_MASK             = 112,
 	ICON_DISPLAY          = 113,
 	ICON_MOVIE            = 114,
