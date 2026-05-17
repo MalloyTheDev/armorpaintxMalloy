@@ -23,3 +23,9 @@ jobs:
       run: |
         cd paint
         ../base/make --compile
+    - name: Build engine test (cube)
+      run: cd base/tests/cube && ../../../base/make --compile
+    - name: Build engine test (fall)
+      run: cd base/tests/fall && ../../../base/make --compile
+    - name: Build engine test (triangle)
+      run: cd base/tests/triangle && ../../../base/make --compile
